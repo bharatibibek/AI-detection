@@ -1,0 +1,327 @@
+<xaiArtifact artifact_id="shap-explainer-2024" title="shap.html" contentType="text/html">
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>SHAP Explainer for Transaction Anomalies</title>
+      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
+      <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+      <style>
+        .custom-dropdown { position: relative; }
+        .custom-dropdown select { appearance: none; -webkit-appearance: none; background: url('data:image/svg+xml;utf8,<svg fill=\'gray\' height=\'20\' viewBox=\'0 0 20 20\' width=\'20\' xmlns=\'http://www.w3.org/2000/svg\'><path d=\'M7.293 7.293a1 1 0 011.414 0L10 8.586l1.293-1.293a1 1 0 111.414 1.414l-2 2a1 1 0 01-1.414 0l-2-2a1 1 0 010-1.414z\'/></svg>') no-repeat right 0.75rem center/1.5em; padding-right: 2.5em; }
+        .highlight { background: yellow; padding: 0 0.2em; border-radius: 0.2em; }
+      </style>
+    </head>
+    <body class="bg-gray-50 min-h-screen flex flex-col">
+      <header class="bg-white shadow">
+        <div class="container mx-auto px-4 py-4 flex items-center justify-between">
+          <h1 class="text-2xl font-bold text-blue-700">SHAP Explainer for Transaction Anomalies</h1>
+          <nav>
+            <ul class="flex space-x-6 text-gray-700 font-medium">
+              <li><a href="dashboard.html" class="hover:text-blue-600">Dashboard</a></li>
+              <li><a href="dashboard.html#ai-detect" class="hover:text-blue-600">Detect Anomaly</a></li>
+              <li><a href="shap.html" class="hover:text-purple-700 font-semibold">SHAP Explain</a></li>
+              <li><a href="dashboard.html#settings" class="hover:text-blue-600">Settings</a></li>
+            </ul>
+          </nav>
+        </div>
+      </header>
+      <main class="flex-1 container mx-auto px-4 py-8">
+        <section class="bg-white rounded shadow p-8 mt-8">
+          <div class="mb-6">
+            <label class="block font-semibold mb-2">Select Anomaly</label>
+            <div class="custom-dropdown w-full max-w-xl">
+              <select id="anomalyDropdown" class="border rounded px-3 py-2 w-full text-lg"></select>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <div>
+              <div class="font-semibold mb-2">SHAP Waterfall Plot</div>
+              <div id="waterfallPlot" class="w-full" style="height:400px;"></div>
+            </div>
+            <div>
+              <div class="font-semibold mb-2">SHAP Bar Plot</div>
+              <div id="barPlot" class="w-full" style="height:400px;"></div>
+            </div>
+          </div>
+          <div class="mt-8">
+            <div class="font-semibold mb-2">Explanation</div>
+            <div id="explanation" class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-gray-800"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
+            <div>
+              <div class="font-semibold mb-2">Time Series Plot</div>
+              <div id="timeSeriesPlot" class="w-full" style="height:400px;"></div>
+            </div>
+            <div>
+              <div class="font-semibold mb-2">Feature Distribution Histogram</div>
+              <div id="histogramPlot" class="w-full" style="height:400px;"></div>
+            </div>
+          </div>
+          <div class="mt-8">
+            <div class="font-semibold mb-2">Amount vs. Balance Scatter Plot</div>
+            <div id="scatterPlot" class="w-full" style="height:400px;"></div>
+          </div>
+        </section>
+      </main>
+      <script>
+        // Assume currentFilename is set globally by the parent app
+        const BACKEND_URL = 'http://127.0.0.1:5000';
+        let currentFilename = window.currentFilename || localStorage.getItem('currentFilename') || '';
+        let anomalies = [];
+        let transactions = [];
+        let chartData = {};
+        let selectedAnomaly = null;
+        const features = ['amount', 'balance', 'account_no'];
+        const featureLabels = ['Amount', 'Balance', 'Account Number'];
+    
+        async function fetchData() {
+          if (!currentFilename) {
+            document.getElementById('explanation').innerHTML = '<span class="text-red-600">No file selected. Please upload a CSV in the dashboard first.</span>';
+            return;
+          }
+          try {
+            const [predictRes, dataRes] = await Promise.all([
+              axios.post(`${BACKEND_URL}/predict`, { filename: currentFilename }),
+              axios.get(`${BACKEND_URL}/data?filename=${encodeURIComponent(currentFilename)}`)
+            ]);
+            anomalies = predictRes.data.anomalies || [];
+            chartData = predictRes.data.chart_data || {};
+            transactions = dataRes.data.data || [];
+            mergeAnomalyData();
+            populateDropdown();
+            if (anomalies.length > 0) {
+              selectAnomaly(0);
+            } else {
+              document.getElementById('explanation').innerHTML = '<span class="text-red-600">No anomalies detected in this file.</span>';
+            }
+          } catch (err) {
+            document.getElementById('explanation').innerHTML = `<span class='text-red-600'>Failed to fetch data: ${err.message}</span>`;
+          }
+        }
+    
+        function mergeAnomalyData() {
+          // Attach anomaly info to transactions by log_id
+          const anomalyMap = {};
+          anomalies.forEach(a => { anomalyMap[a.log_id] = a; });
+          transactions.forEach(t => {
+            if (anomalyMap[t.log_id]) {
+              Object.assign(t, anomalyMap[t.log_id]);
+            }
+          });
+        }
+    
+        function populateDropdown() {
+          const dropdown = document.getElementById('anomalyDropdown');
+          dropdown.innerHTML = '';
+          anomalies.forEach((a, i) => {
+            dropdown.innerHTML += `<option value="${i}">[${a.log_id}] ${a.member_id} - ${a.transaction_type} - NPR ${a.amount}</option>`;
+          });
+          dropdown.onchange = e => selectAnomaly(parseInt(e.target.value));
+        }
+    
+        function selectAnomaly(idx) {
+          selectedAnomaly = anomalies[idx];
+          fetchShapForAnomaly(idx);
+        }
+    
+        async function fetchShapForAnomaly(idx) {
+          if (!selectedAnomaly) return;
+          try {
+            const shapRes = await axios.post(`${BACKEND_URL}/shap`, {
+              filename: currentFilename,
+              model_type: 'Isolation Forest', // or use a global/model selector if needed
+              index: idx
+            });
+            const shapData = shapRes.data;
+            // Use returned SHAP values for plots
+            selectedAnomaly._shap_values = shapData.local_shap || selectedAnomaly.shap_values || [0,0,0];
+            selectedAnomaly._feature_names = shapData.feature_names || featureLabels;
+            updatePlotsAndExplanationWithShap(selectedAnomaly);
+          } catch (err) {
+            // Fallback to anomaly.shap_values if present
+            selectedAnomaly._shap_values = selectedAnomaly.shap_values || [0,0,0];
+            selectedAnomaly._feature_names = featureLabels;
+            document.getElementById('explanation').innerHTML = `<span class='text-red-600'>Failed to fetch SHAP explanation from backend: ${err.message}</span>`;
+            updatePlotsAndExplanationWithShap(selectedAnomaly);
+          }
+        }
+    
+        function updatePlotsAndExplanationWithShap(anomaly) {
+          if (!anomaly) return;
+          // SHAP Waterfall Plot
+          plotWaterfall(anomaly);
+          // SHAP Bar Plot
+          plotBar(anomaly);
+          // Explanation
+          document.getElementById('explanation').innerHTML = anomaly.explanation || 'No explanation available.';
+          // Time Series Plot
+          plotTimeSeries();
+          // Histogram
+          plotHistogram();
+          // Scatter Plot
+          plotScatter();
+        }
+    
+        function plotWaterfall(anomaly) {
+          const base = 0;
+          const shap = anomaly._shap_values || [0,0,0];
+          const featuresArr = [anomaly.amount, anomaly.balance, anomaly.account_no];
+          const steps = [base];
+          let sum = base;
+          for (let i = 0; i < shap.length; i++) {
+            sum += shap[i];
+            steps.push(sum);
+          }
+          const traces = [];
+          let prev = base;
+          for (let i = 0; i < shap.length; i++) {
+            traces.push({
+              x: [featureLabels[i]],
+              y: [shap[i]],
+              base: prev,
+              type: 'bar',
+              orientation: 'v',
+              marker: { color: shap[i] >= 0 ? '#ef4444' : '#2563eb' },
+              name: `${featureLabels[i]} (${featuresArr[i]})`,
+              hovertemplate: `${featureLabels[i]}: %{y:.2f}<extra></extra>`
+            });
+            prev += shap[i];
+          }
+          // Add final bar for anomaly score
+          traces.push({
+            x: ['Anomaly Score'],
+            y: [anomaly.anomaly_score - base - shap.reduce((a,b)=>a+b,0)],
+            base: prev,
+            type: 'bar',
+            orientation: 'v',
+            marker: { color: '#f59e42' },
+            name: 'Anomaly Score',
+            hovertemplate: 'Anomaly Score: %{y:.2f}<extra></extra>'
+          });
+          Plotly.newPlot('waterfallPlot', traces, {
+            barmode: 'relative',
+            title: '',
+            height: 400,
+            showlegend: true,
+            xaxis: { title: '', tickfont: { size: 14 } },
+            yaxis: { title: 'Contribution', zeroline: true },
+            margin: { t: 30, l: 40, r: 10, b: 40 }
+          }, {responsive: true});
+        }
+    
+        function plotBar(anomaly) {
+          const shap = anomaly._shap_values || [0,0,0];
+          Plotly.newPlot('barPlot', [{
+            x: shap,
+            y: featureLabels,
+            type: 'bar',
+            orientation: 'h',
+            marker: {
+              color: shap.map(v => v >= 0 ? '#ef4444' : '#2563eb')
+            },
+            hovertemplate: '%{y}: %{x:.2f}<extra></extra>'
+          }], {
+            title: '',
+            height: 400,
+            xaxis: { title: 'SHAP Value' },
+            yaxis: { title: '' },
+            margin: { t: 30, l: 100, r: 10, b: 40 }
+          }, {responsive: true});
+        }
+    
+        function plotTimeSeries() {
+          const amounts = chartData.amounts || transactions.map(t => t.amount);
+          const timestamps = transactions.map(t => t.timestamp);
+          const anomalyIndices = chartData.anomaly_indices || [];
+          const anomalyAmounts = chartData.anomaly_amounts || [];
+          const trace1 = {
+            x: timestamps,
+            y: amounts,
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: 'Amount',
+            marker: { color: '#2563eb', size: 6 },
+            line: { color: '#2563eb' }
+          };
+          const trace2 = {
+            x: anomalyIndices.map(i => timestamps[i]),
+            y: anomalyAmounts,
+            mode: 'markers',
+            name: 'Anomaly',
+            marker: { color: '#ef4444', size: 12, symbol: 'circle-open' }
+          };
+          Plotly.newPlot('timeSeriesPlot', [trace1, trace2], {
+            title: '',
+            height: 400,
+            xaxis: { title: 'Timestamp', tickangle: -45 },
+            yaxis: { title: 'Amount' },
+            margin: { t: 30, l: 40, r: 10, b: 80 },
+            showlegend: true
+          }, {responsive: true});
+        }
+    
+        function plotHistogram() {
+          const amounts = transactions.map(t => t.amount);
+          const selectedAmount = selectedAnomaly.amount;
+          Plotly.newPlot('histogramPlot', [
+            {
+              x: amounts,
+              type: 'histogram',
+              marker: { color: '#2563eb', opacity: 0.7 },
+              name: 'Amount'
+            },
+            {
+              x: [selectedAmount],
+              type: 'scatter',
+              mode: 'markers',
+              marker: { color: '#f59e42', size: 16, symbol: 'star' },
+              name: 'Selected Anomaly'
+            }
+          ], {
+            title: '',
+            height: 400,
+            xaxis: { title: 'Amount' },
+            yaxis: { title: 'Count' },
+            margin: { t: 30, l: 40, r: 10, b: 40 },
+            showlegend: true
+          }, {responsive: true});
+        }
+    
+        function plotScatter() {
+          const amounts = transactions.map(t => t.amount);
+          const balances = transactions.map(t => t.balance);
+          const anomalyIndices = chartData.anomaly_indices || [];
+          const anomalyAmounts = anomalyIndices.map(i => amounts[i]);
+          const anomalyBalances = anomalyIndices.map(i => balances[i]);
+          const trace1 = {
+            x: amounts,
+            y: balances,
+            mode: 'markers',
+            name: 'Normal',
+            marker: { color: '#2563eb', size: 8, opacity: 0.5 }
+          };
+          const trace2 = {
+            x: anomalyAmounts,
+            y: anomalyBalances,
+            mode: 'markers',
+            name: 'Anomaly',
+            marker: { color: '#ef4444', size: 16, symbol: 'diamond' }
+          };
+          Plotly.newPlot('scatterPlot', [trace1, trace2], {
+            title: '',
+            height: 400,
+            xaxis: { title: 'Amount' },
+            yaxis: { title: 'Balance' },
+            margin: { t: 30, l: 40, r: 10, b: 40 },
+            showlegend: true
+          }, {responsive: true});
+        }
+    
+        window.onload = fetchData;
+      </script>
+    </body>
+    </html>
+    </xaiArtifact> 

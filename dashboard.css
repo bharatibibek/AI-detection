@@ -1,0 +1,90 @@
+/* Glassmorphism effect for cards and header */
+.glassmorphism {
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.glassmorphism-card {
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 24px 0 rgba(31, 38, 135, 0.10);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  padding: 1.5rem;
+  transition: box-shadow 0.2s, transform 0.2s;
+}
+.glassmorphism-card:hover {
+  box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.18);
+  transform: translateY(-4px) scale(1.03);
+}
+
+/* Buttons */
+.btn-glass {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 1rem;
+  box-shadow: 0 2px 8px 0 rgba(31, 38, 135, 0.08);
+  background: rgba(255,255,255,0.25);
+  border: 1px solid rgba(255,255,255,0.18);
+  transition: background 0.2s, box-shadow 0.2s, transform 0.2s;
+}
+.btn-glass:hover {
+  background: rgba(255,255,255,0.45);
+  box-shadow: 0 4px 16px 0 rgba(31, 38, 135, 0.12);
+  transform: translateY(-2px) scale(1.04);
+}
+
+/* Navigation */
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1.2rem;
+  border-radius: 10px;
+  transition: background 0.2s, color 0.2s;
+}
+.nav-link:hover, .nav-link.active {
+  background: linear-gradient(90deg, #a5b4fc 0%, #f0abfc 100%);
+  color: #312e81 !important;
+}
+
+/* Table header gradients */
+th {
+  font-weight: 700;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+  .glassmorphism-card {
+    padding: 1rem;
+  }
+  .nav-link {
+    font-size: 1rem;
+    padding: 0.5rem 0.7rem;
+  }
+}
+
+/* Animations */
+.glassmorphism-card, .btn-glass, .nav-link {
+  transition: all 0.2s cubic-bezier(.4,0,.2,1);
+}
+
+/* Custom scrollbar for tables */
+.glassmorphism-card::-webkit-scrollbar {
+  height: 8px;
+  background: #e0e7ff;
+  border-radius: 8px;
+}
+.glassmorphism-card::-webkit-scrollbar-thumb {
+  background: #a5b4fc;
+  border-radius: 8px;
+} 
