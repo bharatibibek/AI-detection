@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 import pandas as pd
 from sklearn.ensemble import IsolationForest
@@ -20,7 +20,7 @@ import tempfile
 import base64
 import io
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder='static')
 CORS(app)
 
 UPLOAD_FOLDER = 'uploads'
@@ -34,7 +34,11 @@ mlp_scaler = None
 
 @app.route('/')
 def index():
-    return send_from_directory('templates', 'dashboard.html')
+    return render_template('dashboard.html')
+
+@app.route('/shap.html')
+def shap_explainer():
+    return render_template('shap.html')
 
 @app.route('/<path:path>')
 def static_proxy(path):
