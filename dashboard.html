@@ -4,10 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kathmandu Valley Cooperative - Anomaly Detection Dashboard</title>
-  <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="/static/css/dashboard.css">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom/dist/chartjs-plugin-zoom.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
@@ -137,8 +137,8 @@
         <p class="text-gray-500">Advanced AI models for detecting transaction anomalies</p>
       </div>
       <div class="flex flex-wrap gap-4 mb-6 items-center">
-        <label class="font-medium">Model:</label>
-        <select id="model-select" class="border rounded px-2 py-1">
+        <label class="font-medium" for="model-select">Model:</label>
+        <select id="model-select" name="model-select" class="border rounded px-2 py-1">
           <option>Isolation Forest</option>
           <option>MLP Model</option>
         </select>
@@ -195,7 +195,7 @@
           <div class="text-2xl font-bold" id="anomaly-summary-percent">0%</div>
         </div>
         <div class="flex items-center ml-4">
-          <input type="checkbox" id="toggle-anomaly-visibility" class="mr-2" checked>
+          <input type="checkbox" id="toggle-anomaly-visibility" name="toggle-anomaly-visibility" class="mr-2" checked>
           <label for="toggle-anomaly-visibility" class="text-sm">Show Anomalies</label>
         </div>
         <button id="downloadAnomalyChart" class="ml-4 bg-gray-200 text-gray-700 px-3 py-2 rounded hover:bg-gray-300">Download Chart</button>
@@ -232,67 +232,102 @@
       </div>
     </section>
 
-    <!-- SHAP Anomaly Explanations Section -->
+    <!-- SHAP Anomaly Explanations Section (Advanced, Industry-Level) -->
     <section id="shap-explain-section" class="section hidden">
-      <div class="mb-8 mt-16">
-        <h2 class="text-2xl font-bold text-purple-800 flex items-center gap-2"><i class="fa-solid fa-brain"></i> SHAP Anomaly Explanations</h2>
-        <p class="text-gray-500">Understand why specific transactions were flagged as anomalies</p>
-      </div>
-      <div id="shap-file-status" class="mb-4 text-blue-700 font-semibold"></div>
-      <div id="shap-no-file" class="mb-8 text-red-600 font-semibold hidden">No file selected. Please upload a CSV in the dashboard first.</div>
-      <div id="shap-fallback-message" class="mb-8 text-red-600 font-semibold hidden"></div>
+      <h2 class="text-2xl font-bold text-purple-700 mb-2 flex items-center"><span class="mr-2">🔎</span>SHAP Anomaly Explanations</h2>
+      <p class="mb-4 text-gray-700">Understand why specific transactions were flagged as anomalies using AI and SHAP interpretability.</p>
+      <!-- SHAP status/control elements to prevent JS null errors -->
+      <div id="shap-no-file" class="hidden"></div>
+      <div id="shap-anomaly-controls" class="hidden"></div>
+      <div id="shap-feature-values" class="hidden"></div>
+      <div id="shap-plots" class="hidden"></div>
+      <div id="shap-global-plots" class="hidden"></div>
+      <div id="shap-fallback-message" class="hidden"></div>
       <div class="mb-6 flex gap-4 items-center">
-        <label class="font-semibold">Explanation Type:</label>
-        <select id="shap-mode-select" class="border rounded px-2 py-1">
-          <option value="local">Local Explanation</option>
-          <option value="global">Global Feature Importance</option>
-        </select>
-        <button id="downloadShapReportBtn" class="btn-glass bg-green-600 text-white ml-4"><i class="fa-solid fa-download"></i> Download SHAP Report</button>
+        <label class="font-semibold" for="anomalyDropdown">Select Anomaly:</label>
+        <select id="anomalyDropdown" name="anomalyDropdown" class="border rounded px-3 py-2"></select>
+        <span id="shap-file-status" style="color: #888; margin-left: 12px;"></span>
       </div>
-      <div id="shap-anomaly-controls" class="glassmorphism-card mb-8 hidden">
-        <label class="block font-semibold mb-2">Select Anomaly</label>
-        <div class="custom-dropdown w-full max-w-xl">
-          <select id="anomalyDropdown" class="border rounded px-3 py-2 w-full text-lg"></select>
-        </div>
-        <button id="generateShapBtn" class="btn-glass bg-purple-600 text-white mt-4"><i class="fa-solid fa-magic"></i> Generate Explanation</button>
+      <div class="bg-white p-4 rounded shadow mb-4">
+        <div id="shap-explanation" class="text-lg text-blue-800"></div>
       </div>
-      <div id="shap-feature-values" class="glassmorphism-card mb-8 hidden"></div>
-      <div id="shap-plots" class="hidden">
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <div class="glassmorphism-card">
-            <div class="font-semibold mb-2">SHAP Waterfall Plot</div>
-            <div id="waterfallPlot" class="w-full" style="height:400px;"></div>
-          </div>
-          <div class="glassmorphism-card">
-            <div class="font-semibold mb-2">SHAP Bar Plot</div>
-            <div id="barPlot" class="w-full" style="height:400px;"></div>
-          </div>
-        </div>
-        <div class="glassmorphism-card mt-8">
-          <div class="font-semibold mb-2">Explanation</div>
-          <div id="explanation" class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-gray-800"></div>
-        </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mt-8">
-          <div class="glassmorphism-card">
-            <div class="font-semibold mb-2">Time Series Plot</div>
-            <div id="timeSeriesPlot" class="w-full" style="height:400px;"></div>
-          </div>
-          <div class="glassmorphism-card">
-            <div class="font-semibold mb-2">Feature Distribution Histogram</div>
-            <div id="histogramPlot" class="w-full" style="height:400px;"></div>
-          </div>
-        </div>
-        <div class="glassmorphism-card mt-8">
-          <div class="font-semibold mb-2">Amount vs. Balance Scatter Plot</div>
-          <div id="scatterPlot" class="w-full" style="height:400px;"></div>
-        </div>
-      </div>
-      <div id="shap-global-plots" class="hidden">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
         <div class="glassmorphism-card">
-          <div class="font-semibold mb-2">Global Feature Importance (SHAP)</div>
-          <div id="globalBarPlot" class="w-full" style="height:400px;"></div>
+          <div class="font-semibold mb-2">SHAP Waterfall Plot</div>
+          <div id="shap-waterfall" style="height:400px;"></div>
+        </div>
+        <div class="glassmorphism-card">
+          <div class="font-semibold mb-2">Global Feature Importance</div>
+          <div id="shap-global-bar" style="height:400px;"></div>
         </div>
       </div>
+      <script>
+      // --- SHAP Explain Section Logic (Session-based) ---
+            let selectedModelType = 'Isolation Forest';
+
+      // Call this after anomalies are detected
+      function updateShapAnomalies(anomalies, modelType) {
+        detectedAnomalies = anomalies || [];
+        selectedModelType = modelType || 'Isolation Forest';
+        populateShapDropdown();
+      }
+
+      function populateShapDropdown() {
+        const dropdown = document.getElementById('anomalyDropdown');
+        dropdown.innerHTML = '';
+        const anomalies = window.detectedAnomalies || [];
+        anomalies.forEach((a, idx) => {
+          const opt = document.createElement('option');
+          opt.value = a.log_id; // Use log_id as value
+          opt.text = `Anomaly ${a.log_id || idx} (${a.member_id || ''})`;
+          dropdown.appendChild(opt);
+        });
+        // Attach event handler after populating
+        if (dropdown) {
+          dropdown.onchange = function() {
+            showShapForAnomaly(this.value);
+          };
+        }
+        if (anomalies.length > 0) showShapForAnomaly(anomalies[0].log_id);
+      }
+
+      // Attach event handler directly after populating the dropdown
+      // (see populateShapDropdown function below)
+
+
+      async function showShapForAnomaly(log_id) {
+        const anomalies = window.detectedAnomalies || [];
+        const anomaly = anomalies.find(a => String(a.log_id) === String(log_id));
+        if (!anomaly) return;
+        try {
+          const response = await fetch('/api/shap/explain', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ anomaly, model_type: selectedModelType })
+          });
+          if (!response.ok) {
+            throw new Error(`Server error: ${response.status}`);
+          }
+          const data = await response.json();
+          Plotly.newPlot('shap-waterfall', [{
+            type: 'waterfall',
+            x: data.feature_names,
+            y: data.shap_values,
+            base: data.expected_value,
+            connector: {line: {color: 'rgb(63,81,181)'}}
+          }], { title: 'SHAP Waterfall Plot', xaxis: {automargin: true}, yaxis: {automargin: true} });
+          // In showShapForAnomaly, update the explanation display to include a label
+          document.getElementById('shap-explanation').innerHTML =
+            (data.explanation || 'No explanation available for this anomaly.');
+        } catch (err) {
+          document.getElementById('shap-explanation').textContent = 'Failed to load SHAP explanation: ' + err.message;
+        }
+      }
+      // --- END SHAP Explain Section Logic ---
+
+        // Global feature importance plot removed because /api/shap/global endpoint is not available
+        // To restore this feature, implement the endpoint in the backend and send the required data from the frontend anomalies if needed.
+      </script>
     </section>
 
     <!-- Settings Section -->
@@ -305,16 +340,16 @@
         <h3 class="text-lg font-semibold mb-4">Dashboard Configuration</h3>
         <div class="space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Refresh Interval (seconds)</label>
-            <input type="number" class="w-full border border-gray-300 rounded-lg px-3 py-2" value="30">
+            <label class="block text-sm font-medium text-gray-700 mb-2" for="refreshInterval">Refresh Interval (seconds)</label>
+            <input type="number" id="refreshInterval" name="refreshInterval" class="w-full border border-gray-300 rounded-lg px-3 py-2" value="30">
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">Risk Threshold</label>
-            <input type="range" class="w-full" min="0" max="1" step="0.1" value="0.7">
+            <label class="block text-sm font-medium text-gray-700 mb-2" for="riskThreshold">Risk Threshold</label>
+            <input type="range" id="riskThreshold" name="riskThreshold" class="w-full" min="0" max="1" step="0.1" value="0.7">
           </div>
           <div>
             <label class="flex items-center">
-              <input type="checkbox" class="mr-2" checked>
+              <input type="checkbox" id="enableRealTimeMonitoring" name="enableRealTimeMonitoring" class="mr-2" checked>
               <span>Enable real-time monitoring</span>
             </label>
           </div>
@@ -341,8 +376,8 @@
         <li>location</li>
         <li>label (0 or 1 for anomaly)</li>
       </ul>
-      <label class="block mb-2 font-medium">Choose a CSV file with cooperative transaction data</label>
-      <input type="file" id="csvFileInput" accept=".csv" class="mb-4 w-full border rounded px-2 py-1" />
+      <label class="block mb-2 font-medium" for="csvFileInput">Choose a CSV file with cooperative transaction data</label>
+      <input type="file" id="csvFileInput" name="csvFileInput" accept=".csv" class="mb-4 w-full border rounded px-2 py-1" />
       <div class="flex justify-end gap-2">
         <button onclick="closeModal('uploadModal')" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Cancel</button>
         <button onclick="uploadCSV()" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Upload File</button>
@@ -403,8 +438,7 @@
     let csvData = [];
     let aiModelType = 'Isolation Forest';
     let aiModelMetrics = {};
-    let detectedAnomalies = [];
-    // Chart.js chart references
+        // Chart.js chart references
     let volumeTrendChart = null;
     let transactionTypesChart = null;
     let anomalyChart = null;
@@ -578,17 +612,33 @@
     }
     async function detectAnomaliesWithUI() {
       hideAIError();
-      if (!uploadedFilename) {
-        showAIError('Please upload a CSV file first.');
+      // Robust check for uploadedFilename
+      if (!uploadedFilename || uploadedFilename === '') {
+        alert('Please upload a CSV file first.');
+        console.error('No uploadedFilename set when calling /predict');
         return;
       }
+      // Always get model type directly from dropdown
+      const modelSelect = document.getElementById('model-select');
+      let selectedModelType = modelSelect && modelSelect.value ? modelSelect.value.trim() : '';
+      console.log('Dropdown value for model_type:', selectedModelType);
+      if (!selectedModelType || (selectedModelType !== 'Isolation Forest' && selectedModelType !== 'MLP Model')) {
+        alert('Please select a valid model type (Isolation Forest or MLP Model).');
+        console.error('Invalid or missing model_type when calling /predict:', selectedModelType);
+        return;
+      }
+      const requestBody = {
+        filename: uploadedFilename,
+        model_type: selectedModelType
+      };
+      console.log('Final /predict request body:', requestBody);
       showLoading('Detecting anomalies...');
       document.getElementById('anomalyChartLoading').classList.remove('hidden');
       try {
         const response = await fetch(`${BACKEND_URL}/predict`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: uploadedFilename, model_type: aiModelType })
+          body: JSON.stringify(requestBody)
         });
         let result;
         try {
@@ -603,6 +653,8 @@
           renderDetectedAnomalies(result.anomalies);
           document.getElementById('ai-detected-anomalies-count').textContent = result.anomalies.length;
           showAIStatus('Anomaly detection completed!');
+          // Update SHAP Explain section with latest anomalies
+          updateShapAnomalies(result.anomalies, aiModelType);
           // Plot chart if chart_data is present
           if (result.chart_data) {
             // Try to get timestamps from csvData if available
@@ -864,6 +916,11 @@
     }
     // Chart.js initialization
     window.onload = function() {
+      // Clear previous filename and anomalies on load
+      localStorage.removeItem('currentFilename');
+      window.currentFilename = null;
+      uploadedFilename = null;
+      csvData = [];
       // Initialize charts with empty data
       const ctx1 = document.getElementById('volumeTrendChart').getContext('2d');
       volumeTrendChart = new Chart(ctx1, {
@@ -913,9 +970,12 @@
       document.getElementById('shap-loading').classList.add('hidden');
       document.getElementById('shap-loading').textContent = 'Generating SHAP explanations...';
     }
-    document.getElementById('shap-model-select').addEventListener('change', function(e) {
-      lastShapModelType = e.target.value;
-    });
+    const shapModelSelect = document.getElementById('shap-model-select');
+    if (shapModelSelect) {
+      shapModelSelect.addEventListener('change', function(e) {
+        lastShapModelType = e.target.value;
+      });
+    }
     document.getElementById('shap-mode-select').onchange = function() {
       const mode = this.value;
       if (mode === 'local') {
@@ -933,8 +993,9 @@
     };
     document.getElementById('generateShapBtn').onclick = async function() {
       const idx = document.getElementById('anomalyDropdown').value;
-      if (idx === '' || shap_anomalies.length === 0) return;
-      await fetchShapForAnomaly(parseInt(idx));
+      const anomalies = window.detectedAnomalies || [];
+      if (idx === '' || anomalies.length === 0) return;
+      await fetchShapForAnomaly(idx);
     };
     async function generateShapGlobal() {
       hideShapError();
@@ -1091,8 +1152,7 @@
       });
     }
     // SHAP Section Logic
-    let shap_anomalies = [];
-    let shap_transactions = [];
+        let shap_transactions = [];
     let shap_chartData = {};
     let shap_selectedAnomaly = null;
     const shap_features = ['amount', 'balance', 'account_no'];
@@ -1117,9 +1177,16 @@
       const file = window.currentFilename || localStorage.getItem('currentFilename') || '';
       if (!file) return;
       try {
-        const predictRes = await axios.post('http://127.0.0.1:5000/predict', { filename: file });
-        shap_anomalies = predictRes.data.anomalies || [];
-        if (shap_anomalies.length > 0) {
+        const predictRes = await axios.post('http://127.0.0.1:5000/predict', { 
+          filename: file, 
+          model_type: 'Isolation Forest' 
+        });
+        
+        // Extract anomalies from the predict response
+        const anomalies = predictRes.data.anomalies || [];
+        if (anomalies.length > 0) {
+          // Update global anomalies for SHAP
+          window.detectedAnomalies = anomalies;
           populateShapDropdown();
           document.getElementById('shap-anomaly-controls').classList.remove('hidden');
           document.getElementById('shap-fallback-message').classList.add('hidden');
@@ -1138,7 +1205,8 @@
     }
     function mergeShapAnomalyData() {
       const anomalyMap = {};
-      shap_anomalies.forEach(a => { anomalyMap[a.log_id] = a; });
+      const anomalies = window.detectedAnomalies || [];
+      anomalies.forEach(a => { anomalyMap[a.log_id] = a; });
       shap_transactions.forEach(t => {
         if (anomalyMap[t.log_id]) {
           Object.assign(t, anomalyMap[t.log_id]);
@@ -1148,13 +1216,24 @@
     function populateShapDropdown() {
       const dropdown = document.getElementById('anomalyDropdown');
       dropdown.innerHTML = '';
-      shap_anomalies.forEach((a, i) => {
-        dropdown.innerHTML += `<option value="${i}">[${a.log_id}] ${a.member_id} - ${a.transaction_type} - NPR ${a.amount}</option>`;
+      const anomalies = window.detectedAnomalies || [];
+      anomalies.forEach((a, idx) => {
+        const opt = document.createElement('option');
+        opt.value = a.log_id; // Use log_id as value
+        opt.text = `Anomaly ${a.log_id || idx} (${a.member_id || ''})`;
+        dropdown.appendChild(opt);
       });
-      dropdown.onchange = e => selectShapAnomaly(parseInt(e.target.value));
+      if (anomalies.length > 0) showShapForAnomaly(anomalies[0].log_id);
+      // Attach event handler after populating
+      if (dropdown) {
+        dropdown.onchange = function() {
+          showShapForAnomaly(this.value);
+        };
+      }
     }
     function selectShapAnomaly(idx) {
-      shap_selectedAnomaly = shap_anomalies[idx];
+      const anomalies = window.detectedAnomalies || [];
+      shap_selectedAnomaly = anomalies[idx];
       fetchShapForAnomaly(idx);
     }
     async function fetchShapForAnomaly(idx) {
@@ -1168,7 +1247,8 @@
           index: idx
         });
         const shapData = shapRes.data;
-        shap_selectedAnomaly = shap_anomalies[idx];
+        const anomalies = window.detectedAnomalies || [];
+        shap_selectedAnomaly = anomalies[idx];
         shap_selectedAnomaly._shap_values = shapData.local_shap || shap_selectedAnomaly.shap_values || [0,0,0];
         shap_selectedAnomaly._feature_names = shapData.feature_names || shap_featureLabels;
         updateShapPlotsAndExplanation(shap_selectedAnomaly);

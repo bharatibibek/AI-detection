@@ -145,16 +145,19 @@ def train_model():
     return jsonify({'message': 'Model trained', 'features': X_columns, 'model_type': selected_model_type, 'metrics': metrics})
 
 @app.route('/predict', methods=['POST'])
-def predict_anomalies():
+def predict():
     data = request.get_json()
-    filename = data.get('filename')
-    model_type = data.get('model_type', 'Isolation Forest')
-    if not filename:
-        return jsonify({'error': 'No filename provided'}), 400
-    filepath = os.path.join(UPLOAD_FOLDER, filename)
-    if not os.path.exists(filepath):
-        return jsonify({'error': 'File not found'}), 404
-    df = pd.read_csv(filepath)
+    app.logger.info(f"/predict received: {data}")
+    if not data or 'filename' not in data:
+        return jsonify({'error': 'Missing filename'}), 400
+    if 'model_type' not in data:
+        return jsonify({'error': 'Missing model_type'}), 400
+    filename = data['filename']
+    model_type = data['model_type']
+    file_path = os.path.join('Uploads', filename)
+    if not os.path.exists(file_path):
+        return jsonify({'error': f'File {filename} not found'}), 400
+    df = pd.read_csv(file_path)
     features = df.select_dtypes(include='number').copy()
     if 'label' in features:
         features = features.drop('label', axis=1)
@@ -164,6 +167,7 @@ def predict_anomalies():
     anomaly_indices = []
     anomaly_amounts = []
     all_amounts = df['amount'].tolist() if 'amount' in df else []
+    import pickle
     if model_type == 'Isolation Forest' and model_iforest is not None:
         preds = model_iforest.predict(features)
         df['iso_pred'] = (preds == -1).astype(int)
@@ -183,6 +187,9 @@ def predict_anomalies():
             'anomaly_indices': anomaly_indices,
             'anomaly_amounts': anomaly_amounts
         }
+        # Save Isolation Forest model automatically
+        with open('model.pkl', 'wb') as f:
+            pickle.dump(model_iforest, f)
     elif model_type == 'MLP Model' and model_mlp is not None:
         # Use the same scaler as during training
         global mlp_scaler
@@ -206,6 +213,9 @@ def predict_anomalies():
             'anomaly_indices': anomaly_indices,
             'anomaly_amounts': anomaly_amounts
         }
+        # Save MLP model and scaler automatically
+        with open('model.pkl', 'wb') as f:
+            pickle.dump((model_mlp, mlp_scaler), f)
     else:
         return jsonify({'error': 'Model not trained or unknown model type'}), 400
     return jsonify({'anomalies': anomalies, 'chart_data': chart_data})
@@ -252,19 +262,61 @@ def shap_explain():
         if model_type == 'Isolation Forest' and model_iforest is not None:
             import shap_utils
             local_shap = shap_utils.compute_tree_shap_local(model_iforest, features, index).tolist()
-            explanation = f"Anomaly at index {index} explained by Isolation Forest."
+            base_value = 0  # For Isolation Forest, base value is usually 0
+            # User-friendly explanation
+            main_feature = feature_names[int(np.argmax(np.abs(local_shap)))]
+            if main_feature == 'amount':
+                explanation = "This transaction was flagged as an anomaly because the withdrawal or deposit amount was much higher than usual."
+            elif main_feature == 'device_ip':
+                explanation = "This transaction was flagged as an anomaly because it was made from an unusual IP address."
+            elif main_feature == 'location':
+                explanation = "This transaction was flagged as an anomaly because it took place at a location that is different from usual."
+            elif main_feature == 'timestamp':
+                explanation = "This transaction was flagged as an anomaly because it occurred at an unusual time."
+            else:
+                explanation = f"This transaction was flagged as an anomaly because the value of '{main_feature}' was unusual."
         elif model_type == 'MLP Model' and model_mlp is not None:
             import shap_utils
             X_scaled = mlp_scaler.transform(features.values)
             local_shap = shap_utils.compute_mlp_shap_local(model_mlp, X_scaled, index).tolist()
-            explanation = f"Anomaly at index {index} explained by MLP Model."
+            base_value = 0  # For MLP, base value is usually 0 for anomaly score
+            main_feature = feature_names[int(np.argmax(np.abs(local_shap)))]
+            if main_feature == 'amount':
+                explanation = "This transaction was flagged as an anomaly because the withdrawal or deposit amount was much higher than usual."
+            elif main_feature == 'device_ip':
+                explanation = "This transaction was flagged as an anomaly because it was made from an unusual IP address."
+            elif main_feature == 'location':
+                explanation = "This transaction was flagged as an anomaly because it took place at a location that is different from usual."
+            elif main_feature == 'timestamp':
+                explanation = "This transaction was flagged as an anomaly because it occurred at an unusual time."
+            else:
+                explanation = f"This transaction was flagged as an anomaly because the value of '{main_feature}' was unusual."
         else:
             return jsonify({'error': 'Model not trained or unknown model type'}), 400
 
+        # Waterfall plot (simple version)
+        y = [base_value]
+        for val in local_shap:
+            y.append(y[-1] + val)
+        import plotly.graph_objs as go
+        waterfall_data = [go.Scatter(
+            x=['Base'] + feature_names,
+            y=y,
+            mode='lines+markers',
+            marker=dict(color='rgba(239, 68, 68, 0.8)')
+        )]
+        waterfall_layout = go.Layout(
+            title='SHAP Waterfall (Cumulative)',
+            margin=dict(l=60)
+        )
+
         return jsonify({
             'feature_names': feature_names,
-            'local_shap': local_shap,
-            'feature_values': feature_values,
+            'shap_values': local_shap,
+            'waterfall_plot': {
+                'data': [trace.to_plotly_json() for trace in waterfall_data],
+                'layout': waterfall_layout.to_plotly_json()
+            },
             'explanation': explanation
         })
     except Exception as e:
@@ -459,6 +511,142 @@ def shap_report():
         return (pdf_bytes, 200, {'Content-Type': 'application/pdf', 'Content-Disposition': f'attachment; filename=shap_report_{model_type.replace(" ", "_")}.pdf'})
     except Exception as e:
         return jsonify({'error': f'SHAP report generation failed: {str(e)}'}), 500
+
+@app.route('/api/shap/explain', methods=['POST'])
+def api_shap_explain():
+    import traceback
+    import logging
+    try:
+        data = request.get_json(force=True, silent=True)
+        app.logger.info(f"/api/shap/explain received: {data}")
+        if not data:
+            app.logger.error("No JSON data received in request.")
+            return jsonify({'error': 'No JSON data received in request.'}), 400
+        anomaly = data.get('anomaly')
+        model_type = data.get('model_type', 'Isolation Forest')
+        if anomaly is None or not isinstance(anomaly, dict):
+            app.logger.error(f"Missing or invalid 'anomaly' in request: {anomaly}")
+            return jsonify({'error': "Missing or invalid 'anomaly' in request."}), 400
+        if not model_type:
+            app.logger.error("Missing 'model_type' in request.")
+            return jsonify({'error': "Missing 'model_type' in request."}), 400
+
+        # Use the anomaly dict directly for SHAP explanation
+        import shap
+        import numpy as np
+        import pandas as pd
+        feature_names = list(anomaly.keys())
+        feature_values = [anomaly[f] for f in feature_names if isinstance(anomaly[f], (int, float))]
+        if not feature_values:
+            app.logger.error("No numeric features in anomaly.")
+            return jsonify({'error': 'No numeric features in anomaly'}), 400
+
+        global model_iforest, model_mlp, mlp_scaler
+        if model_type == 'Isolation Forest' and model_iforest is not None:
+            explainer = shap.TreeExplainer(model_iforest)
+            row_df = pd.DataFrame([anomaly])
+            features = row_df.select_dtypes(include='number')
+            feature_values = row_df.iloc[0].to_dict()  # Ensure this is a dict
+            shap_vals = explainer.shap_values(features)[0]
+            expected_value = explainer.expected_value
+        elif model_type == 'MLP Model' and model_mlp is not None:
+            row_df = pd.DataFrame([anomaly])
+            features = row_df.select_dtypes(include='number')
+            X_scaled = mlp_scaler.transform(features.values)
+            explainer = shap.KernelExplainer(model_mlp.predict_proba, mlp_scaler.transform(features.values))
+            shap_values = explainer.shap_values(X_scaled)
+            expected_value = explainer.expected_value[1] if hasattr(explainer, 'expected_value') and isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value
+            shap_vals = shap_values[1][0] if isinstance(shap_values, list) else shap_values[0]
+        else:
+            app.logger.error(f"Model not trained or unknown model type: {model_type}")
+            return jsonify({'error': 'Model not trained or unknown model type'}), 400
+
+        top_features = sorted(zip(features.columns, shap_vals), key=lambda x: abs(x[1]), reverse=True)[:3]
+        # Improved user-friendly AI explanation logic
+        # List of fields to ignore in explanations
+        ignore_fields = {'log_id', 'anomaly', 'label', 'id', 'index', 'member_id'}
+        reasons = []
+        # Detect transaction type
+        transaction_type = anomaly.get('transaction_type', '').lower()
+        amount = None
+        try:
+            amount = float(anomaly.get('amount', 0))
+        except Exception:
+            amount = None
+        for f, s in top_features:
+            if f in ignore_fields:
+                continue  # Skip technical fields
+            value = feature_values.get(f, '?')
+            # Amount logic
+            if f == 'amount' and amount is not None:
+                if transaction_type:
+                    if transaction_type == 'deposit' and abs(s) > 0.1:
+                        reasons.append(
+                            f"the deposit amount (NPR {amount:,.2f}) was much higher than your usual deposits. "
+                            "Such a large deposit is rare for your account and may indicate unusual or unexpected activity."
+                        )
+                    elif transaction_type == 'withdrawal' and abs(s) > 0.1:
+                        reasons.append(
+                            f"the withdrawal amount (NPR {abs(amount):,.2f}) was much higher than your usual withdrawals. "
+                            "Such a large withdrawal is rare for your account and may indicate unusual or unexpected activity."
+                        )
+                else:
+                    # Fallback: infer from sign
+                    if amount > 0 and abs(s) > 0.1:
+                        reasons.append(
+                            f"the deposit amount (NPR {amount:,.2f}) was much higher than your usual deposits. "
+                            "Such a large deposit is rare for your account and may indicate unusual or unexpected activity."
+                        )
+                    elif amount < 0 and abs(s) > 0.1:
+                        reasons.append(
+                            f"the withdrawal amount (NPR {abs(amount):,.2f}) was much higher than your usual withdrawals. "
+                            "Such a large withdrawal is rare for your account and may indicate unusual or unexpected activity."
+                        )
+            # Location
+            elif f == 'location' and value and abs(s) > 0.1:
+                reasons.append(
+                    f"the transaction location ({value}) was different from your usual locations. "
+                    "Transactions from new or unexpected locations may indicate unusual activity."
+                )
+            # Device/IP
+            elif f in ['device_ip', 'ip', 'ip_address'] and value and abs(s) > 0.1:
+                reasons.append(
+                    f"the transaction was made from an unusual IP address ({value}). "
+                    "Access from a new device or network may indicate suspicious activity."
+                )
+            # Time
+            elif f in ['timestamp', 'time', 'date'] and value and abs(s) > 0.1:
+                reasons.append(
+                    f"the transaction occurred at an unusual time ({value}) compared to your normal activity. "
+                    "Transactions at odd hours may indicate unexpected or risky behavior."
+                )
+            # Transaction type
+            elif f == 'transaction_type' and value and abs(s) > 0.1:
+                reasons.append(
+                    f"the transaction type ('{value}') is rare for this account. "
+                    "Unusual transaction types may indicate unexpected activity."
+                )
+            # Fallback for other features
+            elif abs(s) > 0.1:
+                reasons.append(f"the value of '{f}' ({value}) was unusual compared to your normal transactions.")
+        if reasons:
+            explanation = "This transaction was flagged as an anomaly because " + ", and ".join(reasons[:3]) + "."
+        else:
+            explanation = "This transaction was flagged as an anomaly because it was different from normal transactions in one or more important ways."
+        # Ensure all returned values are JSON serializable
+        shap_vals_list = shap_vals.tolist() if hasattr(shap_vals, 'tolist') else list(shap_vals)
+        feature_names_list = list(feature_names) if hasattr(feature_names, '__iter__') else [feature_names]
+        expected_value_serializable = float(expected_value) if hasattr(expected_value, '__float__') else expected_value
+        return jsonify({
+            'shap_values': shap_vals_list,
+            'feature_names': feature_names_list,
+            'expected_value': expected_value_serializable,
+            'explanation': explanation
+        })
+    except Exception as e:
+        tb = traceback.format_exc()
+        app.logger.error(f"Exception in /api/shap/explain: {tb}")
+        return jsonify({'error': str(e), 'traceback': tb}), 500
 
 if __name__ == '__main__':
     app.run(host='127.0.0.1', port=5000, debug=True)
