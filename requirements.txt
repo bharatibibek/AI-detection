@@ -3,3 +3,8 @@ pandas
 scikit-learn
 shap
 plotly
+matplotlib
+seaborn
+numpy
+flask-cors
+reportlab

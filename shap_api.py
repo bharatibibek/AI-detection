@@ -50,11 +50,19 @@ def shap_local(anomaly_id):
 
 @app.route('/api/shap/global')
 def shap_global():
-    global_shap = abs(shap_values).mean(axis=0)
-    return jsonify({
-        'feature_names': data.columns.tolist(),
-        'mean_abs_shap': global_shap.tolist()
-    })
+    try:
+        data = load_data()
+        model = load_model()
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(data)
+        global_shap = abs(shap_values).mean(axis=0)
+        return jsonify({
+            'feature_names': data.columns.tolist(),
+            'mean_abs_shap': global_shap.tolist()
+        })
+    except Exception as e:
+        return jsonify({'error': f'SHAP global computation failed: {str(e)}'}), 500
+
 
 @app.route('/api/shap/explanation/<int:anomaly_id>')
 def shap_explanation(anomaly_id):
@@ -141,6 +149,61 @@ def shap_explain():
         'expected_value': expected_value,
         'explanation': friendly_explanation  # Only user-friendly explanation
     })
+
+@app.route('/api/shap/summary', methods=['POST'])
+def shap_summary():
+    """
+    Returns SHAP values matrix, feature names, and feature values for the dataset.
+    Expects JSON: { 'filename': str, 'model_type': str }
+    """
+    import numpy as np
+    import pandas as pd
+    import pickle
+    import shap
+    data = request.get_json()
+    filename = data.get('filename')
+    model_type = data.get('model_type', 'Isolation Forest')
+    # Load data
+    file_path = os.path.join('Uploads', filename) if filename else None
+    if not filename or not os.path.exists(file_path):
+        return jsonify({'error': 'File not found'}), 400
+    df = pd.read_csv(file_path)
+    features = df.select_dtypes(include='number').copy()
+    if 'label' in features:
+        features = features.drop('label', axis=1)
+    feature_names = features.columns.tolist()
+    # Load model
+    with open('model.pkl', 'rb') as f:
+        model_obj = pickle.load(f)
+    try:
+        if model_type == 'MLP Model' and isinstance(model_obj, tuple):
+            model, scaler = model_obj
+            X_scaled = scaler.transform(features.values)
+            explainer = shap.KernelExplainer(model.predict_proba, X_scaled)
+            shap_values = explainer.shap_values(X_scaled)
+            # Use class 1 SHAP values if multiclass
+            if isinstance(shap_values, list) and len(shap_values) > 1:
+                shap_matrix = np.array(shap_values[1])
+            else:
+                shap_matrix = np.array(shap_values)
+            expected_value = explainer.expected_value[1] if hasattr(explainer, 'expected_value') and isinstance(explainer.expected_value, (list, np.ndarray)) else explainer.expected_value
+        else:
+            model = model_obj
+            explainer = shap.TreeExplainer(model)
+            shap_matrix = explainer.shap_values(features)
+            expected_value = explainer.expected_value
+            if isinstance(shap_matrix, list):
+                shap_matrix = np.array(shap_matrix[0])
+        # Return as lists for JSON
+        return jsonify({
+            'shap_values': shap_matrix.tolist(),
+            'feature_names': feature_names,
+            'feature_values': features.values.tolist(),
+            'expected_value': expected_value
+        })
+    except Exception as e:
+        import traceback
+        return jsonify({'error': f'SHAP summary failed: {str(e)}', 'trace': traceback.format_exc()}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)

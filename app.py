@@ -19,6 +19,10 @@ from reportlab.lib.utils import ImageReader
 import tempfile
 import base64
 import io
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -147,78 +151,89 @@ def train_model():
 @app.route('/predict', methods=['POST'])
 def predict():
     data = request.get_json()
-    app.logger.info(f"/predict received: {data}")
-    if not data or 'filename' not in data:
-        return jsonify({'error': 'Missing filename'}), 400
-    if 'model_type' not in data:
-        return jsonify({'error': 'Missing model_type'}), 400
-    filename = data['filename']
-    model_type = data['model_type']
-    file_path = os.path.join('Uploads', filename)
-    if not os.path.exists(file_path):
-        return jsonify({'error': f'File {filename} not found'}), 400
-    df = pd.read_csv(file_path)
-    features = df.select_dtypes(include='number').copy()
-    if 'label' in features:
-        features = features.drop('label', axis=1)
-    features = features.fillna(features.mean())
-    global model_iforest, model_mlp, X_columns, selected_model_type
+    filename = data.get('filename')
+    model_type = data.get('model_type', 'Isolation Forest')
+
+    # Load data
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    df = pd.read_csv(filepath)
+
+    # Use more features for better accuracy
+    features = ['amount', 'balance', 'transaction_type', 'branch_name']
+    X = df[features].copy()
+
+    # Encode categorical features
+    categorical = ['transaction_type', 'branch_name']
+    numeric = ['amount', 'balance']
+
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', StandardScaler(), numeric),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical)
+        ]
+    )
+
+    # Build pipeline
+    pipeline = Pipeline([
+        ('pre', preprocessor),
+        ('clf', IsolationForest(contamination=0.05, n_estimators=200, random_state=42))
+    ])
+
+    pipeline.fit(X)
+
+    # Get anomaly scores and predictions
+    X_trans = pipeline.named_steps['pre'].transform(X)
+    scores = -pipeline.named_steps['clf'].decision_function(X_trans)
+    preds = pipeline.named_steps['clf'].predict(X_trans)
+
+    # Normalize scores
+    norm_scores = (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
+
+    # If you have labels, evaluate
+    metrics = {}
+    if 'label' in df.columns:
+        y_true = df['label'].values
+        y_pred = (preds == -1).astype(int)
+        metrics = {
+            'accuracy': float(accuracy_score(y_true, y_pred)),
+            'precision': float(precision_score(y_true, y_pred, zero_division=0)),
+            'recall': float(recall_score(y_true, y_pred, zero_division=0)),
+            'f1': float(f1_score(y_true, y_pred, zero_division=0))
+        }
+
+    # Build output
     anomalies = []
-    anomaly_indices = []
-    anomaly_amounts = []
+    for i, row in df.iterrows():
+        if preds[i] == -1:  # Only anomalies
+            anomaly = row.to_dict()
+            anomaly['anomaly_score'] = float(norm_scores[i])
+            # Optionally, add risk level
+            if anomaly['anomaly_score'] > 0.8:
+                anomaly['risk'] = 'high'
+            elif anomaly['anomaly_score'] > 0.6:
+                anomaly['risk'] = 'medium'
+            else:
+                anomaly['risk'] = 'low'
+            anomalies.append(anomaly)
+
+    # Prepare chart data for frontend
     all_amounts = df['amount'].tolist() if 'amount' in df else []
-    import pickle
-    if model_type == 'Isolation Forest' and model_iforest is not None:
-        preds = model_iforest.predict(features)
-        df['iso_pred'] = (preds == -1).astype(int)
-        for idx, row in df.iterrows():
-            if row['iso_pred'] == 1:
-                anomalies.append({
-                    'log_id': row.get('log_id', '-'),
-                    'member_id': row.get('member_id', '-'),
-                    'transaction_type': row.get('transaction_type', '-'),
-                    'amount': row.get('amount', '-'),
-                    'anomaly': 1
-                })
-                anomaly_indices.append(idx)
-                anomaly_amounts.append(row.get('amount', 0))
-        chart_data = {
-            'amounts': all_amounts,
-            'anomaly_indices': anomaly_indices,
-            'anomaly_amounts': anomaly_amounts
-        }
-        # Save Isolation Forest model automatically
-        with open('model.pkl', 'wb') as f:
-            pickle.dump(model_iforest, f)
-    elif model_type == 'MLP Model' and model_mlp is not None:
-        # Use the same scaler as during training
-        global mlp_scaler
-        X = features.values
-        X_scaled = mlp_scaler.transform(X)
-        preds = model_mlp.predict(X_scaled)
-        df['mlp_pred'] = preds
-        for idx, row in df.iterrows():
-            if row['mlp_pred'] == 1:
-                anomalies.append({
-                    'log_id': row.get('log_id', '-'),
-                    'member_id': row.get('member_id', '-'),
-                    'transaction_type': row.get('transaction_type', '-'),
-                    'amount': row.get('amount', '-'),
-                    'anomaly': 1
-                })
-                anomaly_indices.append(idx)
-                anomaly_amounts.append(row.get('amount', 0))
-        chart_data = {
-            'amounts': all_amounts,
-            'anomaly_indices': anomaly_indices,
-            'anomaly_amounts': anomaly_amounts
-        }
-        # Save MLP model and scaler automatically
-        with open('model.pkl', 'wb') as f:
-            pickle.dump((model_mlp, mlp_scaler), f)
-    else:
-        return jsonify({'error': 'Model not trained or unknown model type'}), 400
-    return jsonify({'anomalies': anomalies, 'chart_data': chart_data})
+    anomaly_indices = [i for i, p in enumerate(preds) if p == -1]
+    anomaly_amounts = [df.iloc[i]['amount'] for i in anomaly_indices]
+
+    chart_data = {
+        'amounts': all_amounts,
+        'anomaly_indices': anomaly_indices,
+        'anomaly_amounts': anomaly_amounts
+    }
+
+    return jsonify({
+        'anomalies': anomalies,
+        'metrics': metrics,
+        'model_type': model_type,
+        'features': features,
+        'chart_data': chart_data
+    })
 
 @app.route('/data', methods=['GET'])
 def get_csv_data():

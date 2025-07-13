@@ -237,7 +237,8 @@
     <section id="shap-explain-section" class="section hidden">
       <h2 class="text-2xl font-bold text-purple-700 mb-4 flex items-center"><span class="mr-2">🔎</span>SHAP Anomaly Explanations</h2>
       <p class="mb-6 text-gray-700">Advanced SHAP analysis and comprehensive visualizations for all detected anomalies with detailed insights and patterns.</p>
-      
+      <!-- SHAP error message for JS -->
+      <div id="shap-error-msg" class="text-red-600 font-semibold mb-4 hidden"></div>
       <!-- Control Panel -->
       <div class="bg-white rounded-lg shadow p-6 mb-8">
         <h3 class="text-lg font-semibold mb-4">Analysis Controls</h3>
@@ -507,29 +508,31 @@
 
       // Generate comprehensive SHAP explain analysis
       function generateShapExplainAnalysis(plotType) {
+        showSection('shap-explain'); // Ensure SHAP Explain section is visible
         // Clear previous error
         document.getElementById('shap-explain-error').textContent = '';
         const anomalies = window.detectedAnomalies || [];
         if (anomalies.length === 0) {
+          showSection('shap-explain');
           alert('No anomalies detected. Please run anomaly detection first.');
           return;
         }
-
         // Show loading
         document.getElementById('shap-explain-loading').classList.remove('hidden');
         document.getElementById('shap-explain-results').classList.remove('hidden');
-
         // Hide all sections first
         document.querySelectorAll('[id^="shap-explain-"][id$="-section"]').forEach(section => {
           section.classList.add('hidden');
         });
-
-        // Show selected section
+        // Show selected section, or show error if not found
         const targetSection = document.getElementById(`shap-explain-${plotType}-section`);
         if (targetSection) {
           targetSection.classList.remove('hidden');
+        } else {
+          showSection('shap-explain');
+          document.getElementById('shap-explain-error').textContent = 'Invalid plot type selected.';
+          document.getElementById('shap-explain-results').classList.remove('hidden');
         }
-
         // Generate charts based on plot type
         try {
           switch(plotType) {
@@ -550,13 +553,12 @@
               break;
           }
         } catch (err) {
+          showSection('shap-explain');
           console.error('Error generating SHAP analysis:', err);
           document.getElementById('shap-explain-error').textContent = 'Error generating analysis: ' + (err.message || err);
         }
-
         // Update detailed table
         updateDetailedAnomalyTable(anomalies);
-
         // Hide loading
         document.getElementById('shap-explain-loading').classList.add('hidden');
       }
@@ -1316,7 +1318,11 @@
     }
     // Fetch CSV data from backend and display in table and charts
     async function fetchCSVData() {
-      if (!uploadedFilename) return;
+      showSection('dashboard'); // Ensure dashboard section is visible
+      if (!uploadedFilename) {
+        showSection('dashboard');
+        return;
+      }
       showLoading('Fetching CSV data...');
       try {
         const response = await fetch(`${BACKEND_URL}/data?filename=${encodeURIComponent(uploadedFilename)}`);
@@ -1333,6 +1339,7 @@
           renderRecentTransactions([]);
           updateChartsWithCSV([]);
           updateKeyMetrics([]);
+          showSection('dashboard');
         }
       } catch (err) {
         csvData = [];
@@ -1340,6 +1347,7 @@
         renderRecentTransactions([]);
         updateChartsWithCSV([]);
         updateKeyMetrics([]);
+        showSection('dashboard');
       }
       hideLoading();
     }
@@ -1412,8 +1420,10 @@
       await detectAnomaliesWithUI();
     };
     async function trainModelWithUI() {
+      showSection('ai-detect'); // Ensure section is visible
       hideAIError();
       if (!uploadedFilename) {
+        showSection('ai-detect');
         showAIError('Please upload a CSV file first.');
         return;
       }
@@ -1428,6 +1438,7 @@
         try {
           result = await response.json();
         } catch (jsonErr) {
+          showSection('ai-detect');
           showAIError('Invalid response from backend.');
           hideLoading();
           return;
@@ -1436,17 +1447,21 @@
           updateAIModelStatus(result);
           showAIStatus('Model trained successfully!');
         } else {
+          showSection('ai-detect');
           showAIError(result.error || 'Training failed');
         }
       } catch (err) {
+        showSection('ai-detect');
         showAIError('Error training model. Is the backend running? ' + (err.message || err));
       }
       hideLoading();
     }
     async function detectAnomaliesWithUI() {
+      showSection('ai-detect'); // Ensure section is visible
       hideAIError();
       // Robust check for uploadedFilename
       if (!uploadedFilename || uploadedFilename === '') {
+        showSection('ai-detect');
         alert('Please upload a CSV file first.');
         console.error('No uploadedFilename set when calling /predict');
         return;
@@ -1456,6 +1471,7 @@
       let selectedModelType = modelSelect && modelSelect.value ? modelSelect.value.trim() : '';
       console.log('Dropdown value for model_type:', selectedModelType);
       if (!selectedModelType || (selectedModelType !== 'Isolation Forest' && selectedModelType !== 'MLP Model')) {
+        showSection('ai-detect');
         alert('Please select a valid model type (Isolation Forest or MLP Model).');
         console.error('Invalid or missing model_type when calling /predict:', selectedModelType);
         return;
@@ -1477,21 +1493,21 @@
         try {
           result = await response.json();
         } catch (jsonErr) {
+          showSection('ai-detect');
           showAIError('Invalid response from backend.');
           hideLoading();
           document.getElementById('anomalyChartLoading').classList.add('hidden');
           return;
         }
         if (response.ok && result.anomalies) {
+          window.lastModelTypeFromBackend = result.model_type;
           renderDetectedAnomalies(result.anomalies);
           document.getElementById('ai-detected-anomalies-count').textContent = result.anomalies.length;
           showAIStatus('Anomaly detection completed!');
-          
           // Ensure currentData is set for SHAP functions
           if (!currentData && csvData) {
             currentData = { transactions: csvData };
           }
-          
           // Update SHAP Explain section with latest anomalies
           updateShapAnomalies(result.anomalies, aiModelType);
           // Plot chart if chart_data is present
@@ -1506,6 +1522,7 @@
             updateAnomalySummary(result.anomalies, result.chart_data.amounts.length);
           }
         } else {
+          showSection('ai-detect');
           renderDetectedAnomalies([]);
           document.getElementById('ai-detected-anomalies-count').textContent = '0';
           showAIError(result.error || 'Detection failed');
@@ -1514,16 +1531,15 @@
           updateAnomalySummary([], 0);
         }
       } catch (err) {
+        showSection('ai-detect');
         renderDetectedAnomalies([]);
         document.getElementById('ai-detected-anomalies-count').textContent = '0';
-        
         // Check if it's a network error (backend not running)
         if (err.name === 'TypeError' && err.message.includes('fetch')) {
           showAIError('Error detecting anomalies. Is the backend running? Please ensure the Flask server is started.');
         } else {
           showAIError('Error detecting anomalies: ' + (err.message || err));
         }
-        
         plotAnomalyChart(null); // Clear chart
         plotAnomalyTypeBar([]);
         updateAnomalySummary([], 0);
@@ -1610,6 +1626,11 @@
       });
       // Toggle anomaly visibility
       const showAnomalies = document.getElementById('toggle-anomaly-visibility').checked;
+      // Determine model type for chart title
+      let modelType = aiModelType;
+      if (window.lastModelTypeFromBackend) {
+        modelType = window.lastModelTypeFromBackend;
+      }
       anomalyChart = new Chart(ctx, {
         type: 'line',
         data: {
@@ -1645,7 +1666,7 @@
             legend: { display: true },
             title: {
               display: true,
-              text: 'Isolation Forest - Detected Anomalies in Transactions',
+              text: (modelType || 'Model') + ' - Detected Anomalies in Transactions',
               font: { size: 18 }
             },
             tooltip: {
