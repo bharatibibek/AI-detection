@@ -222,11 +222,12 @@
               <th class="px-2 py-1">Type</th>
               <th class="px-2 py-1">Amount</th>
               <th class="px-2 py-1">Risk</th>
+              <th class="px-2 py-1">Anomaly Score</th>
               <th class="px-2 py-1">Action</th>
             </tr>
           </thead>
           <tbody id="detected-anomalies">
-            <tr><td colspan="6" class="text-center text-gray-400">No anomalies detected</td></tr>
+            <tr><td colspan="7" class="text-center text-gray-400">No anomalies detected</td></tr>
           </tbody>
         </table>
       </div>
@@ -234,42 +235,207 @@
 
     <!-- SHAP Anomaly Explanations Section (Advanced, Industry-Level) -->
     <section id="shap-explain-section" class="section hidden">
-      <h2 class="text-2xl font-bold text-purple-700 mb-2 flex items-center"><span class="mr-2">🔎</span>SHAP Anomaly Explanations</h2>
-      <p class="mb-4 text-gray-700">Understand why specific transactions were flagged as anomalies using AI and SHAP interpretability.</p>
-      <!-- SHAP status/control elements to prevent JS null errors -->
-      <div id="shap-no-file" class="hidden"></div>
-      <div id="shap-anomaly-controls" class="hidden"></div>
-      <div id="shap-feature-values" class="hidden"></div>
-      <div id="shap-plots" class="hidden"></div>
-      <div id="shap-global-plots" class="hidden"></div>
-      <div id="shap-fallback-message" class="hidden"></div>
-      <div class="mb-6 flex gap-4 items-center">
-        <label class="font-semibold" for="anomalyDropdown">Select Anomaly:</label>
-        <select id="anomalyDropdown" name="anomalyDropdown" class="border rounded px-3 py-2"></select>
-        <span id="shap-file-status" style="color: #888; margin-left: 12px;"></span>
-      </div>
-      <div class="bg-white p-4 rounded shadow mb-4">
-        <div id="shap-explanation" class="text-lg text-blue-800"></div>
-      </div>
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-        <div class="glassmorphism-card">
-          <div class="font-semibold mb-2">SHAP Waterfall Plot</div>
-          <div id="shap-waterfall" style="height:400px;"></div>
+      <h2 class="text-2xl font-bold text-purple-700 mb-4 flex items-center"><span class="mr-2">🔎</span>SHAP Anomaly Explanations</h2>
+      <p class="mb-6 text-gray-700">Advanced SHAP analysis and comprehensive visualizations for all detected anomalies with detailed insights and patterns.</p>
+      
+      <!-- Control Panel -->
+      <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <h3 class="text-lg font-semibold mb-4">Analysis Controls</h3>
+        <div class="flex flex-wrap gap-4 items-center">
+          <div>
+            <label for="shap-explain-model-select" class="block text-sm font-medium text-gray-700 mb-1">Model Type:</label>
+            <select id="shap-explain-model-select" class="border rounded px-3 py-2">
+              <option value="Isolation Forest">Isolation Forest</option>
+              <option value="MLP Model">MLP Model</option>
+            </select>
+          </div>
+          <div>
+            <label for="shap-explain-plot-type" class="block text-sm font-medium text-gray-700 mb-1">Plot Type:</label>
+            <select id="shap-explain-plot-type" class="border rounded px-3 py-2">
+              <option value="summary">Summary Analysis</option>
+              <option value="distribution">Distribution Analysis</option>
+              <option value="correlation">Correlation Matrix</option>
+              <option value="timeline">Timeline Analysis</option>
+              <option value="clustering">Anomaly Clustering</option>
+            </select>
+          </div>
+          <button id="generate-shap-explain-analysis" class="bg-purple-600 text-white px-6 py-2 rounded hover:bg-purple-700">
+            <i class="fa-solid fa-chart-line mr-2"></i>Generate Analysis
+          </button>
+          <button id="export-shap-explain-report" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700">
+            <i class="fa-solid fa-download mr-2"></i>Export Report
+          </button>
         </div>
-        <div class="glassmorphism-card">
-          <div class="font-semibold mb-2">Global Feature Importance</div>
-          <div id="shap-global-bar" style="height:400px;"></div>
+      </div>
+
+      <!-- Loading Indicator -->
+      <div id="shap-explain-loading" class="hidden text-center py-8">
+        <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600"></div>
+        <p class="mt-2 text-gray-600">Generating SHAP explain analysis...</p>
+      </div>
+
+      <!-- Anomaly Summary Statistics -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="text-sm text-gray-500">Total Anomalies</div>
+          <div class="text-2xl font-bold text-red-600" id="shap-explain-total-anomalies">0</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="text-sm text-gray-500">Anomaly Rate</div>
+          <div class="text-2xl font-bold text-orange-600" id="shap-explain-anomaly-rate">0%</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="text-sm text-gray-500">Avg Anomaly Score</div>
+          <div class="text-2xl font-bold text-purple-600" id="shap-explain-avg-score">0</div>
+        </div>
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="text-sm text-gray-500">High Risk Anomalies</div>
+          <div class="text-2xl font-bold text-red-800" id="shap-explain-high-risk">0</div>
+        </div>
+      </div>
+
+      <!-- Main Analysis Results -->
+      <div id="shap-explain-error" class="text-red-600 font-semibold mb-4"></div>
+      <div id="shap-explain-results" class="hidden">
+        <!-- Summary Analysis -->
+        <div id="shap-explain-summary-section" class="bg-white rounded-lg shadow p-6 mb-8">
+          <h3 class="text-lg font-semibold mb-4">Anomaly Summary Analysis</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h4 class="font-medium mb-2">Anomaly Distribution by Type</h4>
+              <canvas id="shap-explain-type-distribution" height="300"></canvas>
+            </div>
+            <div>
+              <h4 class="font-medium mb-2">Anomaly Amount Distribution</h4>
+              <canvas id="shap-explain-amount-distribution" height="300"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Distribution Analysis -->
+        <div id="shap-explain-distribution-section" class="bg-white rounded-lg shadow p-6 mb-8 hidden">
+          <h3 class="text-lg font-semibold mb-4">Feature Distribution Analysis</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div>
+              <h4 class="font-medium mb-2">Amount vs Anomaly Score</h4>
+              <canvas id="shap-explain-amount-vs-score" height="250"></canvas>
+            </div>
+            <div>
+              <h4 class="font-medium mb-2">Balance Distribution</h4>
+              <canvas id="shap-explain-balance-distribution" height="250"></canvas>
+            </div>
+            <div>
+              <h4 class="font-medium mb-2">Transaction Type Analysis</h4>
+              <canvas id="shap-explain-transaction-analysis" height="250"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Correlation Analysis -->
+        <div id="shap-explain-correlation-section" class="bg-white rounded-lg shadow p-6 mb-8 hidden">
+          <h3 class="text-lg font-semibold mb-4">Feature Correlation Analysis</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h4 class="font-medium mb-2">Correlation Heatmap</h4>
+              <div id="shap-explain-correlation-heatmap" style="height: 400px;"></div>
+            </div>
+            <div>
+              <h4 class="font-medium mb-2">Feature Importance Ranking</h4>
+              <canvas id="shap-explain-feature-importance" height="400"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timeline Analysis -->
+        <div id="shap-explain-timeline-section" class="bg-white rounded-lg shadow p-6 mb-8 hidden">
+          <h3 class="text-lg font-semibold mb-4">Temporal Analysis</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h4 class="font-medium mb-2">Anomaly Timeline</h4>
+              <canvas id="shap-explain-timeline" height="300"></canvas>
+            </div>
+            <div>
+              <h4 class="font-medium mb-2">Hourly Distribution</h4>
+              <canvas id="shap-explain-hourly-distribution" height="300"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Clustering Analysis -->
+        <div id="shap-explain-clustering-section" class="bg-white rounded-lg shadow p-6 mb-8 hidden">
+          <h3 class="text-lg font-semibold mb-4">Anomaly Clustering Analysis</h3>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div>
+              <h4 class="font-medium mb-2">Anomaly Clusters (2D)</h4>
+              <canvas id="shap-explain-clusters-2d" height="400"></canvas>
+            </div>
+            <div>
+              <h4 class="font-medium mb-2">Cluster Characteristics</h4>
+              <canvas id="shap-explain-cluster-characteristics" height="400"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detailed Anomaly Table -->
+        <div class="bg-white rounded-lg shadow p-6 mb-8">
+          <h3 class="text-lg font-semibold mb-4">Detailed Anomaly Analysis</h3>
+          <div class="overflow-x-auto">
+            <table class="min-w-full table-auto">
+              <thead>
+                <tr class="bg-gray-50">
+                  <th class="px-4 py-2 text-left">Log ID</th>
+                  <th class="px-4 py-2 text-left">Member ID</th>
+                  <th class="px-4 py-2 text-left">Type</th>
+                  <th class="px-4 py-2 text-left">Amount</th>
+                  <th class="px-4 py-2 text-left">Balance</th>
+                  <th class="px-4 py-2 text-left">Branch</th>
+                  <th class="px-4 py-2 text-left">Anomaly Score</th>
+                  <th class="px-4 py-2 text-left">Risk Level</th>
+                  <th class="px-4 py-2 text-left">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="shap-explain-detailed-table">
+                <!-- Detailed anomalies will be inserted here -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Individual Anomaly Analysis -->
+      <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <h3 class="text-lg font-semibold mb-4">Individual Anomaly Analysis</h3>
+        <div class="flex flex-wrap gap-4 items-center mb-4">
+          <label for="anomalyDropdown" class="font-semibold">Select Anomaly:</label>
+          <select id="anomalyDropdown" name="anomalyDropdown" class="border rounded px-3 py-2"></select>
+          <span id="shap-file-status" style="color: #888; margin-left: 12px;"></span>
+        </div>
+        <div class="bg-blue-50 p-4 rounded shadow mb-4">
+          <div id="shap-explanation" class="text-lg text-blue-800"></div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+          <div class="glassmorphism-card">
+            <div class="font-semibold mb-2">SHAP Waterfall Plot</div>
+            <div id="shap-waterfall" style="height:400px;"></div>
+          </div>
+          <div class="glassmorphism-card">
+            <div class="font-semibold mb-2">Global Feature Importance</div>
+            <div id="shap-global-bar" style="height:400px;"></div>
+          </div>
         </div>
       </div>
       <script>
       // --- SHAP Explain Section Logic (Session-based) ---
-            let selectedModelType = 'Isolation Forest';
+      let selectedModelType = 'Isolation Forest';
+      let shapExplainCharts = {};
 
       // Call this after anomalies are detected
       function updateShapAnomalies(anomalies, modelType) {
         detectedAnomalies = anomalies || [];
         selectedModelType = modelType || 'Isolation Forest';
         populateShapDropdown();
+        updateShapExplainStats();
+        generateShapExplainAnalysis('summary');
       }
 
       function populateShapDropdown() {
@@ -290,10 +456,6 @@
         }
         if (anomalies.length > 0) showShapForAnomaly(anomalies[0].log_id);
       }
-
-      // Attach event handler directly after populating the dropdown
-      // (see populateShapDropdown function below)
-
 
       async function showShapForAnomaly(log_id) {
         const anomalies = window.detectedAnomalies || [];
@@ -323,10 +485,664 @@
           document.getElementById('shap-explanation').textContent = 'Failed to load SHAP explanation: ' + err.message;
         }
       }
-      // --- END SHAP Explain Section Logic ---
 
-        // Global feature importance plot removed because /api/shap/global endpoint is not available
-        // To restore this feature, implement the endpoint in the backend and send the required data from the frontend anomalies if needed.
+      // Update SHAP explain statistics
+      function updateShapExplainStats() {
+        const anomalies = window.detectedAnomalies || [];
+        const totalTransactions = currentData ? currentData.transactions.length : (csvData ? csvData.length : 0);
+        
+        document.getElementById('shap-explain-total-anomalies').textContent = anomalies.length;
+        document.getElementById('shap-explain-anomaly-rate').textContent = 
+          totalTransactions > 0 ? ((anomalies.length / totalTransactions) * 100).toFixed(2) + '%' : '0%';
+        
+        // Calculate average anomaly score (if available)
+        const avgScore = anomalies.length > 0 ? 
+          anomalies.reduce((sum, a) => sum + (a.anomaly_score || 0), 0) / anomalies.length : 0;
+        document.getElementById('shap-explain-avg-score').textContent = avgScore.toFixed(3);
+        
+        // Count high risk anomalies (score > 0.8)
+        const highRiskCount = anomalies.filter(a => (a.anomaly_score || 0) > 0.8).length;
+        document.getElementById('shap-explain-high-risk').textContent = highRiskCount;
+      }
+
+      // Generate comprehensive SHAP explain analysis
+      function generateShapExplainAnalysis(plotType) {
+        // Clear previous error
+        document.getElementById('shap-explain-error').textContent = '';
+        const anomalies = window.detectedAnomalies || [];
+        if (anomalies.length === 0) {
+          alert('No anomalies detected. Please run anomaly detection first.');
+          return;
+        }
+
+        // Show loading
+        document.getElementById('shap-explain-loading').classList.remove('hidden');
+        document.getElementById('shap-explain-results').classList.remove('hidden');
+
+        // Hide all sections first
+        document.querySelectorAll('[id^="shap-explain-"][id$="-section"]').forEach(section => {
+          section.classList.add('hidden');
+        });
+
+        // Show selected section
+        const targetSection = document.getElementById(`shap-explain-${plotType}-section`);
+        if (targetSection) {
+          targetSection.classList.remove('hidden');
+        }
+
+        // Generate charts based on plot type
+        try {
+          switch(plotType) {
+            case 'summary':
+              generateSummaryCharts(anomalies);
+              break;
+            case 'distribution':
+              generateDistributionCharts(anomalies);
+              break;
+            case 'correlation':
+              generateCorrelationCharts(anomalies);
+              break;
+            case 'timeline':
+              generateTimelineCharts(anomalies);
+              break;
+            case 'clustering':
+              generateClusteringCharts(anomalies);
+              break;
+          }
+        } catch (err) {
+          console.error('Error generating SHAP analysis:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error generating analysis: ' + (err.message || err);
+        }
+
+        // Update detailed table
+        updateDetailedAnomalyTable(anomalies);
+
+        // Hide loading
+        document.getElementById('shap-explain-loading').classList.add('hidden');
+      }
+
+      // Generate summary charts
+      function generateSummaryCharts(anomalies) {
+        try {
+          // Type distribution chart
+          const typeCounts = {};
+          anomalies.forEach(a => {
+            const type = a.transaction_type || 'Unknown';
+            typeCounts[type] = (typeCounts[type] || 0) + 1;
+          });
+
+          const typeCtx = document.getElementById('shap-explain-type-distribution');
+          if (typeCtx && Object.keys(typeCounts).length > 0) {
+            if (shapExplainCharts.typeDistribution) {
+              shapExplainCharts.typeDistribution.destroy();
+            }
+            shapExplainCharts.typeDistribution = new Chart(typeCtx, {
+              type: 'doughnut',
+              data: {
+                labels: Object.keys(typeCounts),
+                datasets: [{
+                  data: Object.values(typeCounts),
+                  backgroundColor: [
+                    '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899'
+                  ]
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  legend: { position: 'bottom' },
+                  title: { display: true, text: 'Anomaly Distribution by Transaction Type' }
+                }
+              }
+            });
+          }
+
+          // Amount distribution chart
+          const amounts = anomalies.map(a => a.amount || 0);
+          const amountCtx = document.getElementById('shap-explain-amount-distribution');
+          if (amountCtx && amounts.length > 0) {
+            if (shapExplainCharts.amountDistribution) {
+              shapExplainCharts.amountDistribution.destroy();
+            }
+            // Create histogram-like data by binning the amounts
+            const minAmount = Math.min(...amounts);
+            const maxAmount = Math.max(...amounts);
+            const binCount = 10;
+            const binSize = (maxAmount - minAmount) / binCount;
+            
+            const bins = Array(binCount).fill(0);
+            const binLabels = [];
+            
+            for (let i = 0; i < binCount; i++) {
+              const binStart = minAmount + (i * binSize);
+              const binEnd = minAmount + ((i + 1) * binSize);
+              binLabels.push(`${binStart.toFixed(0)}-${binEnd.toFixed(0)}`);
+              
+              amounts.forEach(amount => {
+                if (amount >= binStart && amount < binEnd) {
+                  bins[i]++;
+                }
+              });
+            }
+            
+            shapExplainCharts.amountDistribution = new Chart(amountCtx, {
+              type: 'bar',
+              data: {
+                labels: binLabels,
+                datasets: [{
+                  label: 'Amount Distribution',
+                  data: bins,
+                  backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                  borderColor: 'rgb(239, 68, 68)',
+                  borderWidth: 1
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  legend: { display: false },
+                  title: { display: true, text: 'Anomaly Amount Distribution' }
+                },
+                scales: {
+                  x: { title: { display: true, text: 'Amount Range (NPR)' } },
+                  y: { title: { display: true, text: 'Frequency' }, beginAtZero: true }
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Error in generateSummaryCharts:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error in summary analysis: ' + (err.message || err);
+        }
+      }
+
+      // Generate distribution charts
+      function generateDistributionCharts(anomalies) {
+        try {
+          // Amount vs Anomaly Score scatter plot
+          const amountCtx = document.getElementById('shap-explain-amount-vs-score');
+          if (amountCtx && anomalies.length > 0) {
+            if (shapExplainCharts.amountVsScore) {
+              shapExplainCharts.amountVsScore.destroy();
+            }
+            shapExplainCharts.amountVsScore = new Chart(amountCtx, {
+              type: 'scatter',
+              data: {
+                datasets: [{
+                  label: 'Anomalies',
+                  data: anomalies.map(a => ({
+                    x: a.amount || 0,
+                    y: a.anomaly_score || 0
+                  })),
+                  backgroundColor: 'rgba(239, 68, 68, 0.7)',
+                  borderColor: 'rgb(239, 68, 68)',
+                  pointRadius: 6
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Amount vs Anomaly Score' }
+                },
+                scales: {
+                  x: { title: { display: true, text: 'Amount (NPR)' } },
+                  y: { title: { display: true, text: 'Anomaly Score' } }
+                }
+              }
+            });
+          }
+
+          // Balance distribution
+          const balances = anomalies.map(a => a.balance || 0);
+          const balanceCtx = document.getElementById('shap-explain-balance-distribution');
+          if (balanceCtx && balances.length > 0) {
+            if (shapExplainCharts.balanceDistribution) {
+              shapExplainCharts.balanceDistribution.destroy();
+            }
+            shapExplainCharts.balanceDistribution = new Chart(balanceCtx, {
+              type: 'bar',
+              data: {
+                labels: ['Low (< 10K)', 'Medium (10K-50K)', 'High (50K-100K)', 'Very High (> 100K)'],
+                datasets: [{
+                  label: 'Count',
+                  data: [
+                    balances.filter(b => b < 10000).length,
+                    balances.filter(b => b >= 10000 && b < 50000).length,
+                    balances.filter(b => b >= 50000 && b < 100000).length,
+                    balances.filter(b => b >= 100000).length
+                  ],
+                  backgroundColor: 'rgba(139, 92, 246, 0.7)',
+                  borderColor: 'rgb(139, 92, 246)',
+                  borderWidth: 1
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Balance Distribution' }
+                },
+                scales: {
+                  y: { beginAtZero: true }
+                }
+              }
+            });
+          }
+
+          // Transaction type analysis
+          const typeCtx = document.getElementById('shap-explain-transaction-analysis');
+          if (typeCtx && anomalies.length > 0) {
+            const typeStats = {};
+            anomalies.forEach(a => {
+              const type = a.transaction_type || 'Unknown';
+              if (!typeStats[type]) {
+                typeStats[type] = { count: 0, totalAmount: 0 };
+              }
+              typeStats[type].count++;
+              typeStats[type].totalAmount += a.amount || 0;
+            });
+
+            if (shapExplainCharts.transactionAnalysis) {
+              shapExplainCharts.transactionAnalysis.destroy();
+            }
+            shapExplainCharts.transactionAnalysis = new Chart(typeCtx, {
+              type: 'bar',
+              data: {
+                labels: Object.keys(typeStats),
+                datasets: [{
+                  label: 'Count',
+                  data: Object.values(typeStats).map(s => s.count),
+                  backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                  borderColor: 'rgb(59, 130, 246)',
+                  borderWidth: 1
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Transaction Type Analysis' }
+                },
+                scales: {
+                  y: { beginAtZero: true }
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Error in generateDistributionCharts:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error in distribution analysis: ' + (err.message || err);
+        }
+      }
+
+      // Generate correlation charts
+      function generateCorrelationCharts(anomalies) {
+        try {
+          // Feature importance ranking
+          const featureCtx = document.getElementById('shap-explain-feature-importance');
+          if (featureCtx && anomalies.length > 0) {
+            // Calculate feature importance based on variance
+            const features = ['amount', 'balance', 'member_id', 'account_no'];
+            const importance = features.map(feature => {
+              const values = anomalies.map(a => a[feature] || 0);
+              const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
+              const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+              return { feature, importance: Math.sqrt(variance) };
+            }).sort((a, b) => b.importance - a.importance);
+
+            if (shapExplainCharts.featureImportance) {
+              shapExplainCharts.featureImportance.destroy();
+            }
+            shapExplainCharts.featureImportance = new Chart(featureCtx, {
+              type: 'bar',
+              data: {
+                labels: importance.map(i => i.feature),
+                datasets: [{
+                  label: 'Importance Score',
+                  data: importance.map(i => i.importance),
+                  backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                  borderColor: 'rgb(16, 185, 129)',
+                  borderWidth: 1
+                }]
+              },
+              options: {
+                responsive: true,
+                indexAxis: 'y', // This makes it horizontal
+                plugins: {
+                  title: { display: true, text: 'Feature Importance Ranking' }
+                },
+                scales: {
+                  x: { beginAtZero: true }
+                }
+              }
+            });
+          }
+
+          // Correlation heatmap (simplified)
+          const heatmapDiv = document.getElementById('shap-explain-correlation-heatmap');
+          if (heatmapDiv && anomalies.length > 0) {
+            const features = ['amount', 'balance', 'anomaly_score'];
+            const correlationData = features.map((f1, i) => 
+              features.map((f2, j) => {
+                if (i === j) return 1;
+                const values1 = anomalies.map(a => a[f1] || 0);
+                const values2 = anomalies.map(a => a[f2] || 0);
+                return calculateCorrelation(values1, values2);
+              })
+            );
+
+            Plotly.newPlot(heatmapDiv, [{
+              z: correlationData,
+              x: features,
+              y: features,
+              type: 'heatmap',
+              colorscale: 'RdBu'
+            }], {
+              title: 'Feature Correlation Matrix',
+              xaxis: { title: 'Features' },
+              yaxis: { title: 'Features' }
+            });
+          }
+        } catch (err) {
+          console.error('Error in generateCorrelationCharts:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error in correlation analysis: ' + (err.message || err);
+        }
+      }
+
+      // Generate timeline charts
+      function generateTimelineCharts(anomalies) {
+        try {
+          // Anomaly timeline
+          const timelineCtx = document.getElementById('shap-explain-timeline');
+          if (timelineCtx && anomalies.length > 0) {
+            const timelineData = anomalies.map(a => ({
+              date: a.timestamp ? new Date(a.timestamp).toLocaleDateString() : 'Unknown',
+              amount: a.amount || 0,
+              score: a.anomaly_score || 0
+            }));
+
+            const dates = [...new Set(timelineData.map(d => d.date))].sort();
+            const dailyCounts = dates.map(date => 
+              timelineData.filter(d => d.date === date).length
+            );
+
+            if (shapExplainCharts.timeline) {
+              shapExplainCharts.timeline.destroy();
+            }
+            shapExplainCharts.timeline = new Chart(timelineCtx, {
+              type: 'line',
+              data: {
+                labels: dates,
+                datasets: [{
+                  label: 'Daily Anomalies',
+                  data: dailyCounts,
+                  borderColor: 'rgb(239, 68, 68)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  tension: 0.1
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Anomaly Timeline' }
+                },
+                scales: {
+                  y: { beginAtZero: true }
+                }
+              }
+            });
+          }
+
+          // Hourly distribution
+          const hourlyCtx = document.getElementById('shap-explain-hourly-distribution');
+          if (hourlyCtx && anomalies.length > 0) {
+            const hourlyCounts = new Array(24).fill(0);
+            anomalies.forEach(a => {
+              if (a.timestamp) {
+                const hour = new Date(a.timestamp).getHours();
+                hourlyCounts[hour]++;
+              }
+            });
+
+            if (shapExplainCharts.hourlyDistribution) {
+              shapExplainCharts.hourlyDistribution.destroy();
+            }
+            shapExplainCharts.hourlyDistribution = new Chart(hourlyCtx, {
+              type: 'bar',
+              data: {
+                labels: Array.from({length: 24}, (_, i) => `${i}:00`),
+                datasets: [{
+                  label: 'Anomalies',
+                  data: hourlyCounts,
+                  backgroundColor: 'rgba(245, 158, 11, 0.7)',
+                  borderColor: 'rgb(245, 158, 11)',
+                  borderWidth: 1
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Hourly Distribution' }
+                },
+                scales: {
+                  y: { beginAtZero: true }
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Error in generateTimelineCharts:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error in timeline analysis: ' + (err.message || err);
+        }
+      }
+
+      // Generate clustering charts
+      function generateClusteringCharts(anomalies) {
+        try {
+          // 2D clustering visualization
+          const clusterCtx = document.getElementById('shap-explain-clusters-2d');
+          if (clusterCtx && anomalies.length > 0) {
+            // Simple 2D projection using amount and balance
+            const clusterData = anomalies.map(a => ({
+              x: a.amount || 0,
+              y: a.balance || 0,
+              score: a.anomaly_score || 0
+            }));
+
+            if (shapExplainCharts.clusters2d) {
+              shapExplainCharts.clusters2d.destroy();
+            }
+            shapExplainCharts.clusters2d = new Chart(clusterCtx, {
+              type: 'scatter',
+              data: {
+                datasets: [{
+                  label: 'Anomalies',
+                  data: clusterData,
+                  backgroundColor: clusterData.map(d => 
+                    d.score > 0.8 ? 'rgba(239, 68, 68, 0.8)' : 
+                    d.score > 0.6 ? 'rgba(245, 158, 11, 0.8)' : 'rgba(59, 130, 246, 0.8)'
+                  ),
+                  borderColor: clusterData.map(d => 
+                    d.score > 0.8 ? 'rgb(239, 68, 68)' : 
+                    d.score > 0.6 ? 'rgb(245, 158, 11)' : 'rgb(59, 130, 246)'
+                  ),
+                  pointRadius: 6
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Anomaly Clusters (Amount vs Balance)' },
+                  legend: { display: false }
+                },
+                scales: {
+                  x: { title: { display: true, text: 'Amount (NPR)' } },
+                  y: { title: { display: true, text: 'Balance (NPR)' } }
+                }
+              }
+            });
+          }
+
+          // Cluster characteristics
+          const charCtx = document.getElementById('shap-explain-cluster-characteristics');
+          if (charCtx && anomalies.length > 0) {
+            // Group by risk level
+            const riskGroups = {
+              'High Risk': anomalies.filter(a => (a.anomaly_score || 0) > 0.8),
+              'Medium Risk': anomalies.filter(a => (a.anomaly_score || 0) > 0.6 && (a.anomaly_score || 0) <= 0.8),
+              'Low Risk': anomalies.filter(a => (a.anomaly_score || 0) <= 0.6)
+            };
+
+            if (shapExplainCharts.clusterCharacteristics) {
+              shapExplainCharts.clusterCharacteristics.destroy();
+            }
+            shapExplainCharts.clusterCharacteristics = new Chart(charCtx, {
+              type: 'bar',
+              data: {
+                labels: Object.keys(riskGroups),
+                datasets: [{
+                  label: 'Count',
+                  data: Object.values(riskGroups).map(group => group.length),
+                  backgroundColor: [
+                    'rgba(239, 68, 68, 0.7)',
+                    'rgba(245, 158, 11, 0.7)',
+                    'rgba(59, 130, 246, 0.7)'
+                  ],
+                  borderColor: [
+                    'rgb(239, 68, 68)',
+                    'rgb(245, 158, 11)',
+                    'rgb(59, 130, 246)'
+                  ],
+                  borderWidth: 1
+                }]
+              },
+              options: {
+                responsive: true,
+                plugins: {
+                  title: { display: true, text: 'Cluster Characteristics by Risk Level' }
+                },
+                scales: {
+                  y: { beginAtZero: true }
+                }
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Error in generateClusteringCharts:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error in clustering analysis: ' + (err.message || err);
+        }
+      }
+
+      // Update detailed anomaly table
+      function updateDetailedAnomalyTable(anomalies) {
+        try {
+          const tbody = document.getElementById('shap-explain-detailed-table');
+          if (tbody) {
+            tbody.innerHTML = anomalies.map(a => {
+              const risk = getRiskLevel(a);
+              const score = (a.anomaly_score !== undefined ? Number(a.anomaly_score).toFixed(3) : '0.000');
+              return `
+                <tr class="border-b">
+                  <td class="px-4 py-2">${a.log_id || 'N/A'}</td>
+                  <td class="px-4 py-2">${a.member_id || 'N/A'}</td>
+                  <td class="px-4 py-2">${a.transaction_type || 'N/A'}</td>
+                  <td class="px-4 py-2">NPR ${(a.amount || 0).toLocaleString()}</td>
+                  <td class="px-4 py-2">NPR ${(a.balance || 0).toLocaleString()}</td>
+                  <td class="px-4 py-2">${a.branch_name || 'N/A'}</td>
+                  <td class="px-4 py-2">${score}</td>
+                  <td class="px-4 py-2">
+                    <span class="px-2 py-1 rounded text-xs ${risk.class}">${risk.label}</span>
+                  </td>
+                  <td class="px-4 py-2">
+                    <button onclick="showShapForAnomaly('${a.log_id}')" class="text-blue-600 hover:text-blue-800 text-sm">
+                      <i class="fa-solid fa-chart-line mr-1"></i>Analyze
+                    </button>
+                  </td>
+                </tr>
+              `;
+            }).join('');
+          }
+        } catch (err) {
+          console.error('Error in updateDetailedAnomalyTable:', err);
+          document.getElementById('shap-explain-error').textContent = 'Error in detailed anomaly table: ' + (err.message || err);
+        }
+      }
+
+      // Utility function to calculate correlation
+      function calculateCorrelation(x, y) {
+        const n = x.length;
+        if (n !== y.length) return 0;
+        
+        const sumX = x.reduce((a, b) => a + b, 0);
+        const sumY = y.reduce((a, b) => a + b, 0);
+        const sumXY = x.reduce((sum, xi, i) => sum + xi * y[i], 0);
+        const sumX2 = x.reduce((sum, xi) => sum + xi * xi, 0);
+        const sumY2 = y.reduce((sum, yi) => sum + yi * yi, 0);
+        
+        const numerator = n * sumXY - sumX * sumY;
+        const denominator = Math.sqrt((n * sumX2 - sumX * sumX) * (n * sumY2 - sumY * sumY));
+        
+        return denominator === 0 ? 0 : numerator / denominator;
+      }
+
+      // Event listeners
+      document.addEventListener('DOMContentLoaded', function() {
+        // SHAP explain plot type change
+        const plotTypeSelect = document.getElementById('shap-explain-plot-type');
+        if (plotTypeSelect) {
+          plotTypeSelect.addEventListener('change', function() {
+            generateShapExplainAnalysis(this.value);
+          });
+        }
+
+        // Generate analysis button
+        const generateBtn = document.getElementById('generate-shap-explain-analysis');
+        if (generateBtn) {
+          generateBtn.addEventListener('click', function() {
+            const plotType = document.getElementById('shap-explain-plot-type').value;
+            generateShapExplainAnalysis(plotType);
+          });
+        }
+
+        // Export report button
+        const exportBtn = document.getElementById('export-shap-explain-report');
+        if (exportBtn) {
+          exportBtn.addEventListener('click', function() {
+            exportShapExplainReport();
+          });
+        }
+
+        // Initialize SHAP explain section if anomalies exist
+        if (window.detectedAnomalies && window.detectedAnomalies.length > 0) {
+          updateShapAnomalies(window.detectedAnomalies, 'Isolation Forest');
+        }
+      });
+
+      // Export SHAP explain report
+      function exportShapExplainReport() {
+        const anomalies = window.detectedAnomalies || [];
+        if (anomalies.length === 0) {
+          alert('No anomalies to export');
+          return;
+        }
+
+        const csvContent = "data:text/csv;charset=utf-8," + 
+          "log_id,member_id,transaction_type,amount,balance,branch_name,anomaly_score,risk_level,timestamp\n" +
+          anomalies.map(a => 
+            `${a.log_id || ''},${a.member_id || ''},${a.transaction_type || ''},${a.amount || ''},${a.balance || ''},${a.branch_name || ''},${a.anomaly_score || ''},${
+              (a.anomaly_score || 0) > 0.8 ? 'High' :
+              (a.anomaly_score || 0) > 0.6 ? 'Medium' : 'Low'
+            },${a.timestamp || ''}`
+          ).join('\n');
+        
+        const encodedUri = encodeURI(csvContent);
+        const link = document.createElement("a");
+        link.setAttribute("href", encodedUri);
+        link.setAttribute("download", "anomaly_analysis_report.csv");
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+
+      // --- END SHAP Explain Section Logic ---
       </script>
     </section>
 
@@ -414,8 +1230,21 @@
       if (section === 'dashboard') document.getElementById('dashboard-section').classList.remove('hidden');
       if (section === 'ai-detect') document.getElementById('ai-detect-section').classList.remove('hidden');
       if (section === 'shap-explain') document.getElementById('shap-explain-section').classList.remove('hidden');
+      if (section === 'shap-comprehensive') document.getElementById('shap-comprehensive-section').classList.remove('hidden');
       if (section === 'settings') document.getElementById('settings-section').classList.remove('hidden');
-      if (section === 'shap-explain') setupShapSection(); // Ensure setupShapSection is called for SHAP
+      
+      // Update navigation links
+      document.querySelectorAll('.nav-link').forEach(link => {
+        link.classList.remove('text-blue-600');
+        link.classList.add('text-gray-700');
+      });
+      
+      // Highlight active link
+      const activeLink = document.querySelector(`[onclick="showSection('${section}')"]`);
+      if (activeLink) {
+        activeLink.classList.remove('text-gray-700');
+        activeLink.classList.add('text-blue-600');
+      }
     }
     // Modal logic
     function openModal(id) {
@@ -436,6 +1265,7 @@
     // Store uploaded filename
     let uploadedFilename = null;
     let csvData = [];
+    let currentData = null; // Add currentData global variable
     let aiModelType = 'Isolation Forest';
     let aiModelMetrics = {};
         // Chart.js chart references
@@ -493,17 +1323,20 @@
         const result = await response.json();
         if (response.ok && result.data) {
           csvData = result.data;
+          currentData = { transactions: result.data }; // Set currentData for SHAP functions
           renderRecentTransactions(csvData);
           updateChartsWithCSV(csvData);
           updateKeyMetrics(csvData);
         } else {
           csvData = [];
+          currentData = null;
           renderRecentTransactions([]);
           updateChartsWithCSV([]);
           updateKeyMetrics([]);
         }
       } catch (err) {
         csvData = [];
+        currentData = null;
         renderRecentTransactions([]);
         updateChartsWithCSV([]);
         updateKeyMetrics([]);
@@ -653,6 +1486,12 @@
           renderDetectedAnomalies(result.anomalies);
           document.getElementById('ai-detected-anomalies-count').textContent = result.anomalies.length;
           showAIStatus('Anomaly detection completed!');
+          
+          // Ensure currentData is set for SHAP functions
+          if (!currentData && csvData) {
+            currentData = { transactions: csvData };
+          }
+          
           // Update SHAP Explain section with latest anomalies
           updateShapAnomalies(result.anomalies, aiModelType);
           // Plot chart if chart_data is present
@@ -677,7 +1516,14 @@
       } catch (err) {
         renderDetectedAnomalies([]);
         document.getElementById('ai-detected-anomalies-count').textContent = '0';
-        showAIError('Error detecting anomalies. Is the backend running? ' + (err.message || err));
+        
+        // Check if it's a network error (backend not running)
+        if (err.name === 'TypeError' && err.message.includes('fetch')) {
+          showAIError('Error detecting anomalies. Is the backend running? Please ensure the Flask server is started.');
+        } else {
+          showAIError('Error detecting anomalies: ' + (err.message || err));
+        }
+        
         plotAnomalyChart(null); // Clear chart
         plotAnomalyTypeBar([]);
         updateAnomalySummary([], 0);
@@ -698,16 +1544,19 @@
       const tbody = document.getElementById('detected-anomalies');
       tbody.innerHTML = '';
       if (!data || !data.length) {
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-gray-400">No anomalies detected</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-gray-400">No anomalies detected</td></tr>';
         return;
       }
       data.forEach(row => {
+        const risk = getRiskLevel(row);
+        const score = (row.anomaly_score !== undefined ? Number(row.anomaly_score).toFixed(3) : '0.000');
         tbody.innerHTML += `<tr>
           <td class="px-2 py-1">${row.log_id || '-'}</td>
           <td class="px-2 py-1">${row.member_id || '-'}</td>
           <td class="px-2 py-1">${row.transaction_type || '-'}</td>
-          <td class="px-2 py-1">${row.amount || '-'}</td>
-          <td class="px-2 py-1"><span class="text-red-500 font-bold">High</span></td>
+          <td class="px-2 py-1">${row.amount ? 'NPR ' + Number(row.amount).toLocaleString(undefined, {maximumFractionDigits:2}) : '-'}</td>
+          <td class="px-2 py-1">${risk ? `<span class="${risk.class} px-2 py-1 rounded text-xs">${risk.label}</span>` : '-'}</td>
+          <td class="px-2 py-1">${score}</td>
           <td class="px-2 py-1"><button class="text-blue-500">Details</button></td>
         </tr>`;
       });
@@ -1158,20 +2007,12 @@
     const shap_features = ['amount', 'balance', 'account_no'];
     const shap_featureLabels = ['Amount', 'Balance', 'Account Number'];
     function setupShapSection() {
+      // This function is now handled by the new SHAP explain section
+      // The new section automatically updates when anomalies are detected
       const file = window.currentFilename || localStorage.getItem('currentFilename') || '';
-      document.getElementById('shap-file-status').textContent = file ? `Current file: ${file}` : '';
-      document.getElementById('shap-no-file').classList.toggle('hidden', !!file);
-      document.getElementById('shap-anomaly-controls').classList.add('hidden');
-      document.getElementById('shap-feature-values').classList.add('hidden');
-      document.getElementById('shap-plots').classList.add('hidden');
-      document.getElementById('shap-global-plots').classList.add('hidden');
-      document.getElementById('shap-fallback-message').classList.add('hidden');
-      if (!file) {
-        document.getElementById('shap-fallback-message').textContent = 'No file selected. Please upload a CSV in the dashboard first.';
-        document.getElementById('shap-fallback-message').classList.remove('hidden');
-        return;
+      if (file) {
+        document.getElementById('shap-file-status').textContent = `Current file: ${file}`;
       }
-      fetchShapData();
     }
     async function fetchShapData() {
       const file = window.currentFilename || localStorage.getItem('currentFilename') || '';
@@ -1470,6 +2311,86 @@
         link.click();
       });
     };
+
+    // Global initialization
+    document.addEventListener('DOMContentLoaded', function() {
+      // Initialize charts
+      initializeCharts();
+      
+      // Load any saved data
+      const savedFilename = localStorage.getItem('currentFilename');
+      if (savedFilename) {
+        uploadedFilename = savedFilename;
+        window.currentFilename = savedFilename;
+        fetchCSVData();
+      }
+      
+      // Initialize SHAP section if anomalies exist
+      if (window.detectedAnomalies && window.detectedAnomalies.length > 0) {
+        // Ensure currentData is set for SHAP functions
+        if (!currentData && csvData) {
+          currentData = { transactions: csvData };
+        }
+        updateShapAnomalies(window.detectedAnomalies, 'Isolation Forest');
+      }
+    });
+
+    function initializeCharts() {
+      // Initialize volume trend chart
+      const volumeCtx = document.getElementById('volumeTrendChart');
+      if (volumeCtx) {
+        volumeTrendChart = new Chart(volumeCtx, {
+          type: 'line',
+          data: {
+            labels: [],
+            datasets: [{
+              label: 'Transaction Volume',
+              data: [],
+              borderColor: 'rgb(59, 130, 246)',
+              backgroundColor: 'rgba(59, 130, 246, 0.1)',
+              tension: 0.1
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true } }
+          }
+        });
+      }
+
+      // Initialize transaction types chart
+      const typesCtx = document.getElementById('transactionTypesChart');
+      if (typesCtx) {
+        transactionTypesChart = new Chart(typesCtx, {
+          type: 'doughnut',
+          data: {
+            labels: [],
+            datasets: [{
+              data: [],
+              backgroundColor: ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6']
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: { legend: { position: 'bottom' } }
+          }
+        });
+      }
+    }
+
+    function getRiskLevel(row) {
+      // Prefer backend-provided risk/risk_level if available
+      const riskValue = (row.risk || row.risk_level || '').toLowerCase();
+      if (riskValue === 'high') return { label: 'High', class: 'bg-red-100 text-red-800' };
+      if (riskValue === 'medium') return { label: 'Medium', class: 'bg-yellow-100 text-yellow-800' };
+      if (riskValue === 'low') return { label: 'Low', class: 'bg-green-100 text-green-800' };
+      // Fallback to score-based
+      const score = row.anomaly_score || 0;
+      if (score > 0.8) return { label: 'High', class: 'bg-red-100 text-red-800' };
+      if (score > 0.6) return { label: 'Medium', class: 'bg-yellow-100 text-yellow-800' };
+      return { label: 'Low', class: 'bg-green-100 text-green-800' };
+    }
   </script>
 </body>
 </html>
