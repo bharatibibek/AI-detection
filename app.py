@@ -23,11 +23,26 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+from sklearn.model_selection import GridSearchCV
+from tensorflow import keras
+from tensorflow.keras import layers, models
+from sklearn.metrics import roc_auc_score
+import joblib
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, RepeatVector, TimeDistributed, Dense
+from sklearn.neighbors import LocalOutlierFactor
+from tensorflow.keras import backend as K
+try:
+    from prophet import Prophet
+    print("Prophet imported successfully")
+except ImportError:
+    print("Prophet not available - skipping Prophet model")
+    Prophet = None
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
 
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = 'Uploads'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 model_iforest = None
@@ -35,6 +50,424 @@ model_mlp = None
 X_columns = None
 selected_model_type = None
 mlp_scaler = None
+
+# --- Multimodel Detection: Autoencoder ---
+from flask import Blueprint
+multimodel_bp = Blueprint('multimodel', __name__)
+
+import threading
+model_locks = {"Autoencoder": threading.Lock(), "LSTM": threading.Lock(), "LOF": threading.Lock(), "Prophet": threading.Lock(), "VAE": threading.Lock(), "SVDD": threading.Lock()}
+autoencoder_model = None
+autoencoder_threshold = None
+autoencoder_features = None
+lstm_model = None
+lstm_threshold = None
+lstm_features = None
+lstm_window_size = 10
+lof_model = None
+lof_features = None
+prophet_model = None
+prophet_col = 'amount'
+prophet_interval_width = 0.95
+prophet_anomaly_indices = None
+vae_model = None
+vae_threshold = None
+vae_features = None
+svdd_model = None
+svdd_center = None
+svdd_threshold = None
+svdd_features = None
+
+def build_autoencoder(input_dim):
+    model = models.Sequential([
+        layers.Input(shape=(input_dim,)),
+        layers.Dense(input_dim // 2, activation='relu'),
+        layers.Dense(input_dim // 4, activation='relu'),
+        layers.Dense(input_dim // 2, activation='relu'),
+        layers.Dense(input_dim, activation='linear')
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+def create_lstm_sequences(X, window_size):
+    seqs = []
+    for i in range(len(X) - window_size + 1):
+        seqs.append(X[i:i+window_size])
+    return np.array(seqs)
+
+def build_lstm_autoencoder(input_dim, window_size):
+    model = Sequential([
+        LSTM(32, activation='relu', input_shape=(window_size, input_dim), return_sequences=True),
+        LSTM(16, activation='relu', return_sequences=False),
+        RepeatVector(window_size),
+        LSTM(16, activation='relu', return_sequences=True),
+        LSTM(32, activation='relu', return_sequences=True),
+        TimeDistributed(Dense(input_dim))
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+def build_vae(input_dim, latent_dim=2):
+    inputs = keras.Input(shape=(input_dim,))
+    h = layers.Dense(16, activation='relu')(inputs)
+    z_mean = layers.Dense(latent_dim)(h)
+    z_log_var = layers.Dense(latent_dim)(h)
+    def sampling(args):
+        z_mean, z_log_var = args
+        epsilon = K.random_normal(shape=(K.shape(z_mean)[0], latent_dim))
+        return z_mean + K.exp(0.5 * z_log_var) * epsilon
+    z = layers.Lambda(sampling)([z_mean, z_log_var])
+    encoder = keras.Model(inputs, [z_mean, z_log_var, z], name='encoder')
+    latent_inputs = keras.Input(shape=(latent_dim,))
+    x = layers.Dense(16, activation='relu')(latent_inputs)
+    outputs = layers.Dense(input_dim, activation='linear')(x)
+    decoder = keras.Model(latent_inputs, outputs, name='decoder')
+    outputs = decoder(encoder(inputs)[2])
+    vae = keras.Model(inputs, outputs, name='vae')
+    reconstruction_loss = keras.losses.mse(inputs, outputs)
+    reconstruction_loss = K.sum(reconstruction_loss, axis=1)
+    kl_loss = -0.5 * K.sum(1 + z_log_var - K.square(z_mean) - K.exp(z_log_var), axis=1)
+    vae.add_loss(K.mean(reconstruction_loss + kl_loss))
+    vae.compile(optimizer='adam')
+    return vae
+
+def build_svdd(input_dim):
+    model = keras.Sequential([
+        layers.Input(shape=(input_dim,)),
+        layers.Dense(32, activation='relu'),
+        layers.Dense(16, activation='relu'),
+        layers.Dense(8, activation='relu'),
+        layers.Dense(4, activation='relu'),
+        layers.Dense(2, activation='linear')
+    ])
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+def calculate_risk(score):
+    if score > 0.8:
+        return 'high'
+    elif score > 0.6:
+        return 'medium'
+    else:
+        return 'low'
+
+@multimodel_bp.route('/multimodel/test', methods=['GET'])
+def multimodel_test():
+    return jsonify({'message': 'Multimodel blueprint is working!'})
+
+@multimodel_bp.route('/multimodel/train', methods=['POST'])
+def multimodel_train():
+    print("=== MULTIMODEL TRAIN ENDPOINT CALLED ===")
+    print("Request data:", request.get_json())
+    
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        if not filename:
+            return jsonify({'error': 'Missing filename'}), 400
+            
+        print(f"Processing file: {filename}")
+        
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'File not found'}), 404
+            
+        df = pd.read_csv(filepath)
+        print(f"Loaded CSV with {len(df)} rows")
+        
+        # Use only numeric columns
+        features = df.select_dtypes(include='number').copy()
+        if 'label' in features:
+            features = features.drop('label', axis=1)
+        features = features.fillna(features.mean())
+        
+        print(f"Training models with {features.shape[1]} features")
+        
+        # Train simple Isolation Forest
+        from sklearn.ensemble import IsolationForest
+        iforest = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
+        iforest.fit(features)
+        
+        # Train LOF
+        from sklearn.neighbors import LocalOutlierFactor
+        lof = LocalOutlierFactor(n_neighbors=20, contamination=0.05, novelty=True)
+        lof.fit(features)
+        
+        print("Basic models trained successfully")
+        
+        # Calculate metrics if labels exist
+        metrics = {}
+        if 'label' in df.columns:
+            y_true = df['label'].values
+            iforest_preds = (iforest.predict(features) == -1).astype(int)
+            lof_preds = (lof.predict(features) == -1).astype(int)
+            
+            from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
+            
+            metrics = {
+                'Isolation Forest': {
+                    'accuracy': float(accuracy_score(y_true, iforest_preds)),
+                    'precision': float(precision_score(y_true, iforest_preds, zero_division=0)),
+                    'recall': float(recall_score(y_true, iforest_preds, zero_division=0)),
+                    'f1': float(f1_score(y_true, iforest_preds, zero_division=0))
+                },
+                'LOF': {
+                    'accuracy': float(accuracy_score(y_true, lof_preds)),
+                    'precision': float(precision_score(y_true, lof_preds, zero_division=0)),
+                    'recall': float(recall_score(y_true, lof_preds, zero_division=0)),
+                    'f1': float(f1_score(y_true, lof_preds, zero_division=0))
+                }
+            }
+        else:
+            metrics = {
+                'Isolation Forest': {'status': 'trained'},
+                'LOF': {'status': 'trained'}
+            }
+        
+        # Save models
+        import joblib
+        joblib.dump(iforest, 'iforest_model.pkl')
+        joblib.dump(lof, 'lof_model.pkl')
+        
+        return jsonify({
+            'message': 'Basic models trained successfully',
+            'model_types': ['Isolation Forest', 'LOF'],
+            'metrics': metrics,
+            'features': features.columns.tolist()
+        })
+        
+    except Exception as e:
+        print(f"Error in multimodel_train: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'Training failed: {str(e)}'}), 500
+
+@multimodel_bp.route('/multimodel/predict', methods=['POST'])
+def multimodel_predict():
+    print("=== MULTIMODEL PREDICT ENDPOINT CALLED ===")
+    print("Request data:", request.get_json())
+    
+    try:
+        data = request.get_json()
+        filename = data.get('filename')
+        if not filename:
+            return jsonify({'error': 'Missing filename'}), 400
+            
+        print(f"Processing file: {filename}")
+        
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        if not os.path.exists(filepath):
+            return jsonify({'error': 'File not found'}), 404
+            
+        df = pd.read_csv(filepath)
+        print(f"Loaded CSV with {len(df)} rows")
+        
+        # Use only numeric columns
+        features = df.select_dtypes(include='number').copy()
+        if 'label' in features:
+            features = features.drop('label', axis=1)
+        features = features.fillna(features.mean())
+        X = features.values
+        
+        print(f"Features shape: {X.shape}")
+        
+        # Initialize predictions arrays and scores
+        iforest_pred = np.zeros(len(df))
+        lof_pred = np.zeros(len(df))
+        iforest_score = np.zeros(len(df))
+        lof_score = np.zeros(len(df))
+        autoencoder_score = np.zeros(len(df))
+        lstm_score = np.zeros(len(df))
+        vae_score = np.zeros(len(df))
+        svdd_score = np.zeros(len(df))
+        model_scores_dict = {}
+        
+        # --- Isolation Forest ---
+        try:
+            if os.path.exists('iforest_model.pkl'):
+                print("Loading Isolation Forest model...")
+                iforest = joblib.load('iforest_model.pkl')
+                iforest_pred = (iforest.predict(X) == -1).astype(int)
+                iforest_score_raw = -iforest.decision_function(X)
+                iforest_score = (iforest_score_raw - iforest_score_raw.min()) / (iforest_score_raw.max() - iforest_score_raw.min() + 1e-8)
+                model_scores_dict['Isolation Forest'] = iforest_score
+                print(f"Isolation Forest detected {np.sum(iforest_pred)} anomalies")
+            else:
+                print("Isolation Forest model not found, skipping...")
+        except Exception as e:
+            print(f"Error with Isolation Forest: {e}")
+        
+        # --- LOF ---
+        try:
+            if os.path.exists('lof_model.pkl'):
+                print("Loading LOF model...")
+                lof_model = joblib.load('lof_model.pkl')
+                lof_pred = (lof_model.predict(X) == -1).astype(int)
+                lof_score_raw = -lof_model.decision_function(X)
+                lof_score = (lof_score_raw - lof_score_raw.min()) / (lof_score_raw.max() - lof_score_raw.min() + 1e-8)
+                model_scores_dict['LOF'] = lof_score
+                print(f"LOF detected {np.sum(lof_pred)} anomalies")
+            else:
+                print("LOF model not found, skipping...")
+        except Exception as e:
+            print(f"Error with LOF: {e}")
+        
+        # --- Autoencoder ---
+        try:
+            if os.path.exists('autoencoder_model.h5') and os.path.exists('autoencoder_meta.pkl'):
+                print("Loading Autoencoder model...")
+                from tensorflow.keras.models import load_model
+                autoencoder = load_model('autoencoder_model.h5')
+                meta = joblib.load('autoencoder_meta.pkl')
+                autoencoder_features = meta['features']
+                X_auto = features[autoencoder_features].values
+                recon = autoencoder.predict(X_auto)
+                mse = ((X_auto - recon) ** 2).mean(axis=1)
+                autoencoder_score = (mse - mse.min()) / (mse.max() - mse.min() + 1e-8)
+                model_scores_dict['Autoencoder'] = autoencoder_score
+                print("Autoencoder scores computed.")
+            else:
+                print("Autoencoder model or meta not found, skipping...")
+        except Exception as e:
+            print(f"Error with Autoencoder: {e}")
+        
+        # --- LSTM Autoencoder ---
+        try:
+            if os.path.exists('lstm_autoencoder_model.h5') and os.path.exists('lstm_autoencoder_meta.pkl') and 'timestamp' in df.columns:
+                print("Loading LSTM Autoencoder model...")
+                from tensorflow.keras.models import load_model
+                lstm_model = load_model('lstm_autoencoder_model.h5')
+                meta = joblib.load('lstm_autoencoder_meta.pkl')
+                lstm_features = meta['features']
+                window_size = meta.get('window_size', 10)
+                X_lstm = df.sort_values('timestamp')[lstm_features].fillna(features.mean()).values
+                def create_lstm_sequences(X, window_size):
+                    seqs = []
+                    for i in range(len(X) - window_size + 1):
+                        seqs.append(X[i:i+window_size])
+                    return np.array(seqs)
+                seqs = create_lstm_sequences(X_lstm, window_size)
+                recon = lstm_model.predict(seqs)
+                mse_seq = ((seqs - recon) ** 2).mean(axis=(1,2))
+                # Map sequence-level scores to row-level (repeat for each window)
+                lstm_score_seq = (mse_seq - mse_seq.min()) / (mse_seq.max() - mse_seq.min() + 1e-8)
+                lstm_score = np.zeros(len(df))
+                for i in range(len(lstm_score_seq)):
+                    lstm_score[i:i+window_size] = np.maximum(lstm_score[i:i+window_size], lstm_score_seq[i])
+                model_scores_dict['LSTM Autoencoder'] = lstm_score
+                print("LSTM Autoencoder scores computed.")
+            else:
+                print("LSTM Autoencoder model or meta not found, skipping...")
+        except Exception as e:
+            print(f"Error with LSTM Autoencoder: {e}")
+        
+        # --- VAE ---
+        try:
+            if os.path.exists('vae_model.h5') and os.path.exists('vae_meta.pkl'):
+                print("Loading VAE model...")
+                from tensorflow.keras.models import load_model
+                vae = load_model('vae_model.h5', compile=False)
+                meta = joblib.load('vae_meta.pkl')
+                vae_features = meta['features']
+                X_vae = features[vae_features].values
+                recon = vae.predict(X_vae)
+                mse = ((X_vae - recon) ** 2).mean(axis=1)
+                vae_score = (mse - mse.min()) / (mse.max() - mse.min() + 1e-8)
+                model_scores_dict['VAE'] = vae_score
+                print("VAE scores computed.")
+            else:
+                print("VAE model or meta not found, skipping...")
+        except Exception as e:
+            print(f"Error with VAE: {e}")
+        
+        # --- Deep SVDD ---
+        try:
+            if os.path.exists('svdd_model.h5') and os.path.exists('svdd_meta.pkl'):
+                print("Loading Deep SVDD model...")
+                from tensorflow.keras.models import load_model
+                svdd = load_model('svdd_model.h5', compile=False)
+                meta = joblib.load('svdd_meta.pkl')
+                svdd_features = meta['features']
+                svdd_center = meta['center']
+                svdd_threshold = meta['threshold']
+                X_svdd = features[svdd_features].values
+                outputs = svdd.predict(X_svdd)
+                dists = np.linalg.norm(outputs - svdd_center, axis=1)
+                svdd_score = (dists - dists.min()) / (dists.max() - dists.min() + 1e-8)
+                model_scores_dict['Deep SVDD'] = svdd_score
+                print("Deep SVDD scores computed.")
+            else:
+                print("Deep SVDD model or meta not found, skipping...")
+        except Exception as e:
+            print(f"Error with Deep SVDD: {e}")
+        
+        # --- Ensemble: flag as anomaly if any model detects it ---
+        combined_pred = (iforest_pred | lof_pred)
+        print(f"Ensemble detected {np.sum(combined_pred)} anomalies")
+        
+        # If labels exist, compute metrics
+        metrics = {}
+        if 'label' in df:
+            from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
+            y_true = df['label'].values
+            metrics = {
+                'ensemble': {
+                    'accuracy': float(accuracy_score(y_true, combined_pred)),
+                    'precision': float(precision_score(y_true, combined_pred, zero_division=0)),
+                    'recall': float(recall_score(y_true, combined_pred, zero_division=0)),
+                    'f1': float(f1_score(y_true, combined_pred, zero_division=0))
+                },
+                'Isolation Forest': {
+                    'accuracy': float(accuracy_score(y_true, iforest_pred)),
+                    'precision': float(precision_score(y_true, iforest_pred, zero_division=0)),
+                    'recall': float(recall_score(y_true, iforest_pred, zero_division=0)),
+                    'f1': float(f1_score(y_true, iforest_pred, zero_division=0))
+                },
+                'LOF': {
+                    'accuracy': float(accuracy_score(y_true, lof_pred)),
+                    'precision': float(precision_score(y_true, lof_pred, zero_division=0)),
+                    'recall': float(recall_score(y_true, lof_pred, zero_division=0)),
+                    'f1': float(f1_score(y_true, lof_pred, zero_division=0))
+                }
+            }
+        
+        # Build anomalies output
+        anomalies = []
+        for i, row in df.iterrows():
+            if combined_pred[i] == 1:
+                anomaly = row.to_dict()
+                anomaly['iforest_flag'] = int(iforest_pred[i])
+                anomaly['lof_flag'] = int(lof_pred[i])
+                anomaly['ensemble_flag'] = int(combined_pred[i])
+                # Collect available model scores for this row
+                per_model_scores = {k: float(v[i]) for k, v in model_scores_dict.items() if len(v) == len(df)}
+                anomaly['per_model_scores'] = per_model_scores
+                # Ensemble score: mean of all available model scores
+                if per_model_scores:
+                    ensemble_score = np.mean(list(per_model_scores.values()))
+                    anomaly['anomaly_score'] = float(ensemble_score)
+                    # Use Isolation Forest score for risk calculation to match single-model section
+                    iforest_score = per_model_scores.get('Isolation Forest', ensemble_score)
+                    anomaly['risk'] = calculate_risk(iforest_score)
+                else:
+                    anomaly['anomaly_score'] = 0.0
+                    anomaly['risk'] = 'low'
+                anomaly['models'] = []
+                if iforest_pred[i]: anomaly['models'].append('Isolation Forest')
+                if lof_pred[i]: anomaly['models'].append('LOF')
+                anomalies.append(anomaly)
+        print(f"Returning {len(anomalies)} anomalies")
+        return jsonify({
+            'anomalies': anomalies,
+            'metrics': metrics,
+            'model_types': list(model_scores_dict.keys()),
+            'features': list(features.columns)
+        })
+    except Exception as e:
+        print(f"Error in multimodel_predict: {e}")
+        return jsonify({'error': f'Prediction failed: {str(e)}'}), 500
+
+app.register_blueprint(multimodel_bp)
 
 @app.route('/')
 def index():
@@ -65,6 +498,7 @@ def train_model():
     data = request.get_json()
     filename = data.get('filename')
     model_type = data.get('model_type', 'Isolation Forest')
+    tune = data.get('tune', False)  # New: allow tuning via request
     if not filename:
         return jsonify({'error': 'No filename provided'}), 400
     filepath = os.path.join(UPLOAD_FOLDER, filename)
@@ -80,9 +514,26 @@ def train_model():
     global model_iforest, model_mlp, X_columns, selected_model_type
     X_columns = features.columns.tolist()
     metrics = {}
+    best_params = None
     if model_type == 'Isolation Forest':
-        model_iforest = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
-        model_iforest.fit(features)
+        if tune:
+            param_grid = {
+                'n_estimators': [100, 200, 300],
+                'max_samples': ['auto', 0.8, 0.9],
+                'contamination': [0.01, 0.05, 0.1],
+                'max_features': [1.0, 0.8, 0.6]
+            }
+            grid = GridSearchCV(IsolationForest(random_state=42), param_grid, scoring='f1', cv=3, n_jobs=-1)
+            if 'label' in df:
+                y_true = df['label'].values
+                grid.fit(features, y_true)
+            else:
+                grid.fit(features)
+            model_iforest = grid.best_estimator_
+            best_params = grid.best_params_
+        else:
+            model_iforest = IsolationForest(n_estimators=100, contamination=0.05, random_state=42)
+            model_iforest.fit(features)
         selected_model_type = 'Isolation Forest'
         # If labels are present, calculate metrics
         if 'label' in df:
@@ -98,21 +549,16 @@ def train_model():
     elif model_type == 'MLP Model':
         if 'label' not in df:
             return jsonify({'error': 'No label column for supervised training'}), 400
-        # Robust preprocessing: scale features
         scaler = StandardScaler()
         X = features.values
         y = df['label'].values
         X_scaled = scaler.fit_transform(X)
-        # Train/test split for real-world evaluation
         X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42, stratify=y)
-        # Log class distribution
         class_dist = dict(Counter(y_train))
-        # Oversample the minority class in the training set
         X_train_df = pd.DataFrame(X_train)
         y_train_df = pd.Series(y_train)
         Xy_train = X_train_df.copy()
         Xy_train['label'] = y_train_df.values
-        # Separate majority and minority
         majority = Xy_train[Xy_train['label'] == 0]
         minority = Xy_train[Xy_train['label'] == 1]
         if len(minority) > 0 and len(majority) > 0:
@@ -123,10 +569,21 @@ def train_model():
         else:
             X_train_bal = X_train
             y_train_bal = y_train
-        model_mlp = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, alpha=0.001, random_state=42, early_stopping=True, n_iter_no_change=10)
-        model_mlp.fit(X_train_bal, y_train_bal)
+        if tune:
+            param_grid = {
+                'hidden_layer_sizes': [(64, 32), (128, 64), (128, 64, 32)],
+                'alpha': [0.0001, 0.001, 0.01],
+                'learning_rate_init': [0.001, 0.01],
+                'max_iter': [300, 500, 800]
+            }
+            grid = GridSearchCV(MLPClassifier(random_state=42, early_stopping=True, n_iter_no_change=10), param_grid, scoring='f1', cv=3, n_jobs=-1)
+            grid.fit(X_train_bal, y_train_bal)
+            model_mlp = grid.best_estimator_
+            best_params = grid.best_params_
+        else:
+            model_mlp = MLPClassifier(hidden_layer_sizes=(64, 32), max_iter=500, alpha=0.001, random_state=42, early_stopping=True, n_iter_no_change=10)
+            model_mlp.fit(X_train_bal, y_train_bal)
         selected_model_type = 'MLP Model'
-        # Evaluate on test set
         preds = model_mlp.predict(X_test)
         cm = confusion_matrix(y_test, preds)
         recall_val = recall_score(y_test, preds, zero_division=0)
@@ -141,12 +598,14 @@ def train_model():
         }
         if recall_val == 0:
             metrics['warning'] = 'Model did not detect any anomalies in the test set. Consider more feature engineering.'
-        # Save scaler for use in prediction
         global mlp_scaler
         mlp_scaler = scaler
     else:
         return jsonify({'error': 'Unknown model type'}), 400
-    return jsonify({'message': 'Model trained', 'features': X_columns, 'model_type': selected_model_type, 'metrics': metrics})
+    response = {'message': 'Model trained', 'features': X_columns, 'model_type': selected_model_type, 'metrics': metrics}
+    if best_params is not None:
+        response['best_params'] = best_params
+    return jsonify(response)
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -207,13 +666,7 @@ def predict():
         if preds[i] == -1:  # Only anomalies
             anomaly = row.to_dict()
             anomaly['anomaly_score'] = float(norm_scores[i])
-            # Optionally, add risk level
-            if anomaly['anomaly_score'] > 0.8:
-                anomaly['risk'] = 'high'
-            elif anomaly['anomaly_score'] > 0.6:
-                anomaly['risk'] = 'medium'
-            else:
-                anomaly['risk'] = 'low'
+            anomaly['risk'] = calculate_risk(anomaly['anomaly_score'])
             anomalies.append(anomaly)
 
     # Prepare chart data for frontend

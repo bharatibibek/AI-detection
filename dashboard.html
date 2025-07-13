@@ -23,6 +23,7 @@
           <li><a href="#ai-detect" class="nav-link" onclick="showSection('ai-detect')"><i class="fa-solid fa-robot"></i> Detect Anomaly</a></li>
           <li><a href="#shap-explain" class="nav-link" onclick="showSection('shap-explain')"><i class="fa-solid fa-brain"></i> SHAP Explain</a></li>
           <li><a href="#settings" class="nav-link" onclick="showSection('settings')"><i class="fa-solid fa-gear"></i> Settings</a></li>
+          <li><a href="#multimodel-detect" class="nav-link" onclick="showSection('multimodel-detect')"><i class="fa-solid fa-layer-group"></i> Multimodel Detection</a></li>
         </ul>
       </nav>
     </div>
@@ -1174,6 +1175,125 @@
         </div>
       </div>
     </section>
+
+    <!-- Multimodel Detection Section -->
+    <section id="multimodel-detect-section" class="section hidden">
+      <div class="mb-8 mt-16">
+        <h2 class="text-xl font-semibold text-gray-800">Multimodel Detection</h2>
+        <p class="text-gray-500">State-of-the-art models for robust, real-world anomaly detection</p>
+      </div>
+      <div class="flex flex-wrap gap-4 mb-6 items-center">
+        <label class="font-medium">Models Used:</label>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">Autoencoder</span>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">Isolation Forest</span>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">LSTM Autoencoder</span>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">Variational Autoencoder (VAE)</span>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">Deep SVDD</span>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">Facebook Prophet</span>
+        <span class="px-3 py-2 bg-gray-100 rounded font-mono">LOF (Local Outlier Factor)</span>
+        <button id="trainMultimodelBtn" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700" onclick="handleTrainButtonClick()">Train All Models</button>
+        <button id="detectMultimodelBtn" class="bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700" onclick="handleDetectButtonClick()">Detect Anomalies (Ensemble)</button>
+        <span id="multimodel-error-msg" class="text-red-600 text-sm ml-4 hidden"></span>
+      </div>
+      <!-- Model Status Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Model Type</div>
+          <div class="text-2xl font-bold" id="multimodel-type">Not Trained</div>
+        </div>
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Features</div>
+          <div class="text-2xl font-bold" id="multimodel-features">0</div>
+        </div>
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Accuracy</div>
+          <div class="text-2xl font-bold" id="multimodel-accuracy">-</div>
+        </div>
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">F1 Score</div>
+          <div class="text-2xl font-bold" id="multimodel-f1">-</div>
+        </div>
+      </div>
+      <!-- Performance Metrics -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Precision</div>
+          <div class="text-xl font-bold" id="multimodel-precision">-</div>
+        </div>
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Recall</div>
+          <div class="text-xl font-bold" id="multimodel-recall">-</div>
+        </div>
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Detected Anomalies</div>
+          <div class="text-xl font-bold" id="multimodel-detected-anomalies-count">-</div>
+        </div>
+        <div class="bg-white rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Status</div>
+          <div class="text-xl font-bold" id="multimodel-status">Idle</div>
+        </div>
+      </div>
+      <!-- Main anomaly chart -->
+      <div class="mt-8">
+        <div class="font-semibold mb-2">Detected Anomalies (All Models)</div>
+        <div id="multimodelChartLoading" class="hidden text-center text-blue-600 font-semibold">Rendering chart...</div>
+        <canvas id="multimodelAnomalyChart" height="500" style="max-width:100%;"></canvas>
+      </div>
+      
+      <!-- Anomaly summary cards -->
+      <div class="flex flex-wrap gap-4 mb-4 items-center mt-6">
+        <div class="bg-blue-50 rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Total Anomalies</div>
+          <div class="text-2xl font-bold" id="multimodel-anomaly-summary-count">0</div>
+        </div>
+        <div class="bg-green-50 rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">Anomaly %</div>
+          <div class="text-2xl font-bold" id="multimodel-anomaly-summary-percent">0%</div>
+        </div>
+        <div class="bg-red-50 rounded shadow p-4 flex flex-col items-center">
+          <div class="text-sm text-gray-500">High Risk</div>
+          <div class="text-2xl font-bold" id="multimodel-high-risk-count">0</div>
+        </div>
+        <div class="flex items-center ml-4">
+          <input type="checkbox" id="toggle-multimodel-anomaly-visibility" name="toggle-multimodel-anomaly-visibility" class="mr-2" checked>
+          <label for="toggle-multimodel-anomaly-visibility" class="text-sm">Show Anomalies</label>
+        </div>
+        <button id="downloadMultimodelChart" class="ml-4 bg-gray-200 text-gray-700 px-3 py-2 rounded hover:bg-gray-300">Download Chart</button>
+      </div>
+      
+      <!-- Model performance comparison chart -->
+      <div class="mt-8">
+        <div class="font-semibold mb-2">Model Performance Comparison</div>
+        <canvas id="multimodelPerformanceChart" height="500" style="max-width:100%;"></canvas>
+      </div>
+      
+      <!-- Anomaly distribution by model -->
+      <div class="mt-8">
+        <div class="font-semibold mb-2">Anomalies Detected by Each Model</div>
+        <canvas id="multimodelModelDistributionChart" height="500" style="max-width:100%;"></canvas>
+      </div>
+      <!-- Detected Anomalies Table -->
+      <div class="bg-white rounded shadow p-4 overflow-x-auto mb-8">
+        <div class="font-semibold mb-2">Detected Anomalies</div>
+        <table class="min-w-full text-sm mb-4">
+          <thead>
+            <tr class="bg-gray-100">
+              <th class="px-2 py-1">Log ID</th>
+              <th class="px-2 py-1">Member ID</th>
+              <th class="px-2 py-1">Type</th>
+              <th class="px-2 py-1">Amount</th>
+              <th class="px-2 py-1">Risk</th>
+              <th class="px-2 py-1">Anomaly Score</th>
+              <th class="px-2 py-1">Model</th>
+              <th class="px-2 py-1">Action</th>
+            </tr>
+          </thead>
+          <tbody id="multimodel-detected-anomalies">
+            <tr><td colspan="8" class="text-center text-gray-400">No anomalies detected</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <!-- Data Upload Modal -->
@@ -1225,7 +1345,28 @@
   </div>
 
   <script>
+    // Multimodel chart references (must be at the top to avoid ReferenceError)
+    let multimodelAnomalyChart = null;
+    let multimodelPerformanceChart = null;
+    let multimodelModelDistributionChart = null;
+    let lastMultimodelChartData = null;
+    let lastMultimodelAnomalies = null;
+    let lastMultimodelTimestamps = null;
+    
+    console.log('Script starting...');
     const BACKEND_URL = 'http://127.0.0.1:5000';
+    
+    // Simple button click handler that will definitely work
+    function handleTrainButtonClick() {
+      console.log('handleTrainButtonClick called');
+      trainAllMultimodel();
+    }
+    
+    // Simple detect button click handler that will definitely work
+    function handleDetectButtonClick() {
+      console.log('handleDetectButtonClick called');
+      detectAllMultimodel();
+    }
     // Section navigation
     function showSection(section) {
       document.querySelectorAll('.section').forEach(s => s.classList.add('hidden'));
@@ -1234,6 +1375,7 @@
       if (section === 'shap-explain') document.getElementById('shap-explain-section').classList.remove('hidden');
       if (section === 'shap-comprehensive') document.getElementById('shap-comprehensive-section').classList.remove('hidden');
       if (section === 'settings') document.getElementById('settings-section').classList.remove('hidden');
+      if (section === 'multimodel-detect') document.getElementById('multimodel-detect-section').classList.remove('hidden');
       
       // Update navigation links
       document.querySelectorAll('.nav-link').forEach(link => {
@@ -2412,6 +2554,468 @@
       if (score > 0.6) return { label: 'Medium', class: 'bg-yellow-100 text-yellow-800' };
       return { label: 'Low', class: 'bg-green-100 text-green-800' };
     }
+
+    // --- Multimodel Detection Section Logic ---
+    const multimodelMetrics = [
+      'Autoencoder', 'Isolation Forest', 'LSTM Autoencoder', 'LOF', 'Prophet', 'VAE', 'Deep SVDD', 'ensemble'
+    ];
+    
+    // Chart references for multimodel section
+    // let multimodelAnomalyChart = null;
+    // let multimodelPerformanceChart = null;
+    // let multimodelModelDistributionChart = null;
+    // let lastMultimodelChartData = null;
+    // let lastMultimodelAnomalies = null;
+    // let lastMultimodelTimestamps = null;
+    function updateMultimodelMetrics(metrics) {
+      // Update metrics cards for each model
+      document.getElementById('multimodel-type').textContent = 'Ensemble';
+      document.getElementById('multimodel-features').textContent = metrics.features ? metrics.features.length : '-';
+      const m = metrics.metrics || {};
+      document.getElementById('multimodel-accuracy').textContent = m.ensemble && m.ensemble.accuracy !== undefined ? m.ensemble.accuracy.toFixed(2) : '-';
+      document.getElementById('multimodel-f1').textContent = m.ensemble && m.ensemble.f1 !== undefined ? m.ensemble.f1.toFixed(2) : '-';
+      document.getElementById('multimodel-precision').textContent = m.ensemble && m.ensemble.precision !== undefined ? m.ensemble.precision.toFixed(2) : '-';
+      document.getElementById('multimodel-recall').textContent = m.ensemble && m.ensemble.recall !== undefined ? m.ensemble.recall.toFixed(2) : '-';
+      // Optionally, show per-model metrics in a modal or expandable section
+    }
+    function renderMultimodelAnomalies(anomalies) {
+      const tbody = document.getElementById('multimodel-detected-anomalies');
+      tbody.innerHTML = '';
+      if (!anomalies || anomalies.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-gray-400">No anomalies detected</td></tr>';
+        return;
+      }
+      anomalies.forEach(row => {
+        const models = row.models ? row.models.join(', ') : '';
+        tbody.innerHTML += `<tr>
+          <td class="px-2 py-1">${row.log_id !== undefined ? row.log_id : '-'}</td>
+          <td class="px-2 py-1">${row.member_id !== undefined ? row.member_id : '-'}</td>
+          <td class="px-2 py-1">${row.transaction_type !== undefined ? row.transaction_type : '-'}</td>
+          <td class="px-2 py-1">${row.amount !== undefined ? row.amount : '-'}</td>
+          <td class="px-2 py-1">${row.risk || '-'}</td>
+          <td class="px-2 py-1">${row.ensemble_flag !== undefined ? row.ensemble_flag : '-'}</td>
+          <td class="px-2 py-1">${models}</td>
+          <td class="px-2 py-1">Details</td>
+        </tr>`;
+      });
+    }
+    async function trainAllMultimodel() {
+      console.log('trainAllMultimodel function called');
+      console.log('uploadedFilename:', uploadedFilename);
+      console.log('Function exists and is being called');
+      
+      if (!uploadedFilename) {
+        console.error('No filename available');
+        alert('Please upload a CSV file first before training models.');
+        return;
+      }
+      
+      document.getElementById('multimodel-status').textContent = 'Training...';
+      document.getElementById('multimodel-error-msg').classList.add('hidden');
+      
+      try {
+        console.log('Sending request to /multimodel/train with filename:', uploadedFilename);
+        const requestBody = { filename: uploadedFilename };
+        console.log('Request body:', requestBody);
+        console.log('Full URL:', `${BACKEND_URL}/multimodel/train`);
+        
+        const response = await fetch(`${BACKEND_URL}/multimodel/train`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+        
+        console.log('Response status:', response.status);
+        console.log('Response ok:', response.ok);
+        
+        const result = await response.json();
+        console.log('Response result:', result);
+        
+        if (response.ok) {
+          updateMultimodelMetrics(result);
+          document.getElementById('multimodel-status').textContent = 'Trained';
+          console.log('Training completed successfully');
+        } else {
+          const errorMsg = result.error || 'Training failed';
+          console.error('Training failed:', errorMsg);
+          document.getElementById('multimodel-error-msg').textContent = errorMsg;
+          document.getElementById('multimodel-error-msg').classList.remove('hidden');
+          document.getElementById('multimodel-status').textContent = 'Error';
+        }
+      } catch (err) {
+        console.error('Error in trainAllMultimodel:', err);
+        let errorMessage = 'Error: ' + (err.message || err);
+        
+        // Provide more specific error messages
+        if (err.message && err.message.includes('Failed to fetch')) {
+          errorMessage = 'Error: Cannot connect to backend server. Please make sure Flask is running on http://127.0.0.1:5000';
+        }
+        
+        document.getElementById('multimodel-error-msg').textContent = errorMessage;
+        document.getElementById('multimodel-error-msg').classList.remove('hidden');
+        document.getElementById('multimodel-status').textContent = 'Error';
+        
+        // Show alert for immediate feedback
+        alert('Backend connection failed. Please check if Flask server is running.');
+      }
+    }
+    async function detectAllMultimodel() {
+      console.log('detectAllMultimodel function called');
+      console.log('uploadedFilename:', uploadedFilename);
+      
+      if (!uploadedFilename) {
+        console.error('No filename available');
+        alert('Please upload a CSV file first before detecting anomalies.');
+        return;
+      }
+      
+      document.getElementById('multimodel-status').textContent = 'Detecting...';
+      document.getElementById('multimodel-error-msg').classList.add('hidden');
+      
+      try {
+        console.log('Sending request to /multimodel/predict with filename:', uploadedFilename);
+        const requestBody = { filename: uploadedFilename };
+        console.log('Request body:', requestBody);
+        console.log('Full URL:', `${BACKEND_URL}/multimodel/predict`);
+        
+        const response = await fetch(`${BACKEND_URL}/multimodel/predict`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody)
+        });
+        
+        console.log('Response status:', response.status);
+        console.log('Response ok:', response.ok);
+        
+        const result = await response.json();
+        console.log('Response result:', result);
+        
+        if (response.ok) {
+          updateMultimodelMetrics(result);
+          document.getElementById('multimodel-detected-anomalies-count').textContent = result.anomalies.length;
+          renderMultimodelAnomalies(result.anomalies);
+          
+          // Create charts and visualizations
+          plotMultimodelAnomalyChart(result.anomalies);
+          plotMultimodelPerformanceChart(result.metrics);
+          plotMultimodelModelDistributionChart(result.anomalies);
+          updateMultimodelAnomalySummary(result.anomalies);
+          
+          document.getElementById('multimodel-status').textContent = 'Detection Complete';
+          console.log('Detection completed successfully');
+        } else {
+          const errorMsg = result.error || 'Detection failed';
+          console.error('Detection failed:', errorMsg);
+          document.getElementById('multimodel-error-msg').textContent = errorMsg;
+          document.getElementById('multimodel-error-msg').classList.remove('hidden');
+          document.getElementById('multimodel-status').textContent = 'Error';
+        }
+      } catch (err) {
+        console.error('Error in detectAllMultimodel:', err);
+        let errorMessage = 'Error: ' + (err.message || err);
+        
+        // Provide more specific error messages
+        if (err.message && err.message.includes('Failed to fetch')) {
+          errorMessage = 'Error: Cannot connect to backend server. Please make sure Flask is running on http://127.0.0.1:5000';
+        }
+        
+        document.getElementById('multimodel-error-msg').textContent = errorMessage;
+        document.getElementById('multimodel-error-msg').classList.remove('hidden');
+        document.getElementById('multimodel-status').textContent = 'Error';
+        
+        // Show alert for immediate feedback
+        alert('Backend connection failed. Please check if Flask server is running.');
+      }
+    }
+    // Set up multimodel button event handlers
+    function setupMultimodelButtons() {
+      console.log('setupMultimodelButtons called');
+      const trainBtn = document.getElementById('trainMultimodelBtn');
+      const detectBtn = document.getElementById('detectMultimodelBtn');
+      
+      console.log('Train button element:', trainBtn);
+      console.log('Detect button element:', detectBtn);
+      
+      if (trainBtn) {
+        console.log('Train button found, setting up event handler');
+        trainBtn.onclick = handleTrainButtonClick;
+        console.log('Train button event handler set up successfully');
+      } else {
+        console.error('Train button not found!');
+      }
+      
+      if (detectBtn) {
+        console.log('Detect button found, setting up event handler');
+        detectBtn.onclick = handleDetectButtonClick;
+        console.log('Detect button event handler set up successfully');
+      } else {
+        console.error('Detect button not found!');
+      }
+    }
+
+    // Global initialization
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('DOM loaded, setting up event handlers...');
+      console.log('Current URL:', window.location.href);
+      console.log('Document ready state:', document.readyState);
+      
+      // Set up multimodel buttons
+      setupMultimodelButtons();
+      
+      // Initialize charts
+      initializeCharts();
+      
+      // Load any saved data
+      const savedFilename = localStorage.getItem('currentFilename');
+      if (savedFilename) {
+        uploadedFilename = savedFilename;
+        window.currentFilename = savedFilename;
+        fetchCSVData();
+      }
+      
+      // Initialize SHAP section if anomalies exist
+      if (window.detectedAnomalies && window.detectedAnomalies.length > 0) {
+        // Ensure currentData is set for SHAP functions
+        if (!currentData && csvData) {
+          currentData = { transactions: csvData };
+        }
+        updateShapAnomalies(window.detectedAnomalies, 'Isolation Forest');
+      }
+    });
+
+    // Chart functions for multimodel section
+    function plotMultimodelAnomalyChart(anomalies) {
+      const ctx = document.getElementById('multimodelAnomalyChart').getContext('2d');
+      if (multimodelAnomalyChart) {
+        multimodelAnomalyChart.destroy();
+      }
+      
+      if (!anomalies || anomalies.length === 0) {
+        multimodelAnomalyChart = new Chart(ctx, {
+          type: 'line',
+          data: { labels: [], datasets: [] },
+          options: { responsive: true, plugins: { legend: { display: false } } }
+        });
+        return;
+      }
+      
+      // Assign color and size based on risk
+      const scatterData = anomalies.map((a, i) => ({
+        x: i,
+        y: a.amount || 0,
+        anomaly: a
+      }));
+
+      const colors = anomalies.map(a => {
+        if ((a.risk || '').toLowerCase() === 'high') return 'rgba(239, 68, 68, 0.8)';      // Red
+        if ((a.risk || '').toLowerCase() === 'medium') return 'rgba(245, 158, 11, 0.8)';   // Orange
+        return 'rgba(59, 130, 246, 0.8)'; // Blue for low
+      });
+
+      const borderColors = anomalies.map(a => {
+        if ((a.risk || '').toLowerCase() === 'high') return 'rgb(239, 68, 68)';
+        if ((a.risk || '').toLowerCase() === 'medium') return 'rgb(245, 158, 11)';
+        return 'rgb(59, 130, 246)';
+      });
+
+      const pointSizes = anomalies.map(a => {
+        if ((a.risk || '').toLowerCase() === 'high') return 14;
+        if ((a.risk || '').toLowerCase() === 'medium') return 10;
+        return 8;
+      });
+
+      multimodelAnomalyChart = new Chart(ctx, {
+        type: 'scatter',
+        data: {
+          datasets: [{
+            label: 'Anomaly Amounts',
+            data: scatterData,
+            backgroundColor: colors,
+            borderColor: borderColors,
+            pointRadius: pointSizes,
+            pointHoverRadius: 16
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            title: { display: true, text: 'Multimodel Anomaly Detection Results', font: { size: 16 } },
+            legend: {
+              display: true,
+              labels: {
+                generateLabels: function(chart) {
+                  return [
+                    { text: 'High Risk', fillStyle: 'rgba(239, 68, 68, 0.8)', strokeStyle: 'rgb(239, 68, 68)' },
+                    { text: 'Medium Risk', fillStyle: 'rgba(245, 158, 11, 0.8)', strokeStyle: 'rgb(245, 158, 11)' },
+                    { text: 'Low Risk', fillStyle: 'rgba(59, 130, 246, 0.8)', strokeStyle: 'rgb(59, 130, 246)' }
+                  ];
+                }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function(context) {
+                  const anomaly = anomalies[context.dataIndex];
+                  return [
+                    `Log ID: ${anomaly.log_id ?? 'N/A'}`,
+                    `Member ID: ${anomaly.member_id ?? 'N/A'}`,
+                    `Type: ${anomaly.transaction_type ?? 'N/A'}`,
+                    `Amount: NPR ${anomaly.amount?.toLocaleString() || 0}`,
+                    `Score: ${(anomaly.anomaly_score || 0).toFixed(3)}`,
+                    `Models: ${anomaly.models?.join(', ') || 'None'}`,
+                    `Risk: ${anomaly.risk || 'Unknown'}`
+                  ];
+                }
+              }
+            }
+          },
+          scales: {
+            x: { title: { display: true, text: 'Anomaly Index' } },
+            y: { title: { display: true, text: 'Amount (NPR)' } }
+          }
+        }
+      });
+    }
+    
+    function plotMultimodelPerformanceChart(metrics) {
+      const ctx = document.getElementById('multimodelPerformanceChart').getContext('2d');
+      if (multimodelPerformanceChart) {
+        multimodelPerformanceChart.destroy();
+      }
+      
+      if (!metrics || Object.keys(metrics).length === 0) {
+        multimodelPerformanceChart = new Chart(ctx, {
+          type: 'bar',
+          data: { labels: [], datasets: [] },
+          options: { responsive: true, plugins: { legend: { display: false } } }
+        });
+        return;
+      }
+      
+      const models = Object.keys(metrics).filter(key => key !== 'ensemble');
+      const f1Scores = models.map(model => metrics[model]?.f1 || 0);
+      const accuracies = models.map(model => metrics[model]?.accuracy || 0);
+      
+      multimodelPerformanceChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: models,
+          datasets: [
+            {
+              label: 'F1 Score',
+              data: f1Scores,
+              backgroundColor: 'rgba(59, 130, 246, 0.7)',
+              borderColor: 'rgb(59, 130, 246)',
+              borderWidth: 1
+            },
+            {
+              label: 'Accuracy',
+              data: accuracies,
+              backgroundColor: 'rgba(16, 185, 129, 0.7)',
+              borderColor: 'rgb(16, 185, 129)',
+              borderWidth: 1
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            title: { display: true, text: 'Model Performance Comparison', font: { size: 16 } },
+            legend: { display: true, position: 'top' }
+          },
+          scales: {
+            y: { beginAtZero: true, max: 1 }
+          }
+        }
+      });
+    }
+    
+    function plotMultimodelModelDistributionChart(anomalies) {
+      const ctx = document.getElementById('multimodelModelDistributionChart').getContext('2d');
+      if (multimodelModelDistributionChart) {
+        multimodelModelDistributionChart.destroy();
+      }
+      
+      if (!anomalies || anomalies.length === 0) {
+        multimodelModelDistributionChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: { labels: [], datasets: [] },
+          options: { responsive: true, plugins: { legend: { display: false } } }
+        });
+        return;
+      }
+      
+      // Count anomalies by model
+      const modelCounts = {};
+      anomalies.forEach(anomaly => {
+        if (anomaly.models) {
+          anomaly.models.forEach(model => {
+            modelCounts[model] = (modelCounts[model] || 0) + 1;
+          });
+        }
+      });
+      
+      const labels = Object.keys(modelCounts);
+      const data = Object.values(modelCounts);
+      
+      multimodelModelDistributionChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: data,
+            backgroundColor: [
+              '#EF4444', '#F59E0B', '#10B981', '#3B82F6', 
+              '#8B5CF6', '#EC4899', '#06B6D4', '#84CC16'
+            ]
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: {
+            title: { display: true, text: 'Anomalies Detected by Each Model', font: { size: 16 } },
+            legend: { position: 'bottom' }
+          }
+        }
+      });
+    }
+    
+    function updateMultimodelAnomalySummary(anomalies) {
+      const totalAnomalies = anomalies.length;
+      const totalTransactions = csvData ? csvData.length : 0;
+      const anomalyPercent = totalTransactions > 0 ? (totalAnomalies / totalTransactions * 100) : 0;
+      const highRiskCount = anomalies.filter(a => a.risk === 'high').length;
+      
+      document.getElementById('multimodel-anomaly-summary-count').textContent = totalAnomalies;
+      document.getElementById('multimodel-anomaly-summary-percent').textContent = anomalyPercent.toFixed(2) + '%';
+      document.getElementById('multimodel-high-risk-count').textContent = highRiskCount;
+    }
+    
+    // Download chart functionality for multimodel section
+    document.addEventListener('DOMContentLoaded', function() {
+      const downloadBtn = document.getElementById('downloadMultimodelChart');
+      if (downloadBtn) {
+        downloadBtn.addEventListener('click', function() {
+          if (multimodelAnomalyChart) {
+            const url = multimodelAnomalyChart.toBase64Image('image/png', 2); // 2x pixel ratio for HD
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'multimodel_anomaly_chart.png';
+            a.click();
+          }
+        });
+      }
+    });
+    
+    // Also set up buttons when switching to multimodel section
+    const originalShowSection = showSection;
+    showSection = function(section) {
+      originalShowSection(section);
+      if (section === 'multimodel-detect') {
+        // Small delay to ensure DOM is updated
+        setTimeout(setupMultimodelButtons, 100);
+      }
+    };
   </script>
 </body>
 </html>

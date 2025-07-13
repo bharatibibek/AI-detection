@@ -8,3 +8,5 @@ seaborn
 numpy
 flask-cors
 reportlab
+tensorflow
+keras
