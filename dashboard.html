@@ -1149,32 +1149,93 @@
       </script>
     </section>
 
-    <!-- Settings Section -->
-    <section id="settings-section" class="section hidden">
+    <!-- Settings Section: Always visible for robust debugging -->
+    <section id="settings-section" class="section">
       <div class="mb-8 mt-16">
         <h2 class="text-xl font-semibold text-gray-800">Settings</h2>
-        <p class="text-gray-500">Configure dashboard preferences and model parameters</p>
-      </div>
-      <div class="bg-white p-6 rounded-lg shadow">
-        <h3 class="text-lg font-semibold mb-4">Dashboard Configuration</h3>
-        <div class="space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2" for="refreshInterval">Refresh Interval (seconds)</label>
-            <input type="number" id="refreshInterval" name="refreshInterval" class="w-full border border-gray-300 rounded-lg px-3 py-2" value="30">
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2" for="riskThreshold">Risk Threshold</label>
-            <input type="range" id="riskThreshold" name="riskThreshold" class="w-full" min="0" max="1" step="0.1" value="0.7">
-          </div>
-          <div>
-            <label class="flex items-center">
-              <input type="checkbox" id="enableRealTimeMonitoring" name="enableRealTimeMonitoring" class="mr-2" checked>
-              <span>Enable real-time monitoring</span>
-            </label>
-          </div>
+        <p class="text-gray-500 mb-4">Generate a comprehensive anomaly and SHAP report as a PDF.</p>
+        <div id="settings-report-download" class="bg-white p-6 rounded-lg shadow mb-8">
+          <button id="generateFullReportBtn" type="button" tabindex="0" style="cursor:pointer; background: #16a34a; color: #fff; padding: 12px 24px; border-radius: 6px; font-size: 1.1em; border: none; display: flex; align-items: center; gap: 8px;">
+            <i class="fa-solid fa-file-pdf"></i> Generate Full Report (PDF)
+          </button>
+          <span id="fullReportStatus" class="ml-4 text-sm text-gray-500"></span>
         </div>
       </div>
     </section>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      const btn = document.getElementById('generateFullReportBtn');
+      const status = document.getElementById('fullReportStatus');
+      if (!btn) {
+        console.error('Generate Full Report button not found!');
+        return;
+      }
+      btn.onclick = async function() {
+        status.textContent = 'Generating report...';
+        // Try to get the filename from global or localStorage
+        const filename = window.currentFilename || localStorage.getItem('currentFilename') || '';
+        let selectedModelType = 'Isolation Forest';
+        // Try to get selected model from checkboxes if present
+        const mmChecks = Array.from(document.querySelectorAll('.mm-model'));
+        const checkedModels = mmChecks.filter(cb => cb.checked).map(cb => cb.value);
+        if (checkedModels.length > 0) {
+          selectedModelType = checkedModels[0];
+        }
+        // Try to get top anomaly indices if present
+        let indices = [];
+        if (window.detectedAnomalies && window.detectedAnomalies.length > 0) {
+          indices = window.detectedAnomalies
+            .map((a, i) => ({i, score: a.anomaly_score || 0}))
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5)
+            .map(a => a.i);
+        }
+        console.log('[Report] Button clicked. Filename:', filename, 'Model:', selectedModelType, 'Indices:', indices);
+        if (!filename) {
+          status.textContent = 'Please upload a CSV file first.';
+          console.warn('[Report] No filename found.');
+          return;
+        }
+        try {
+          // Use relative URL for backend (works with Flask default)
+          const response = await fetch('/shap_report', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename, model_type: selectedModelType, indices })
+          });
+          console.log('[Report] Response status:', response.status);
+          if (!response.ok) {
+            let err = '';
+            try { err = await response.json(); } catch(e) {}
+            status.textContent = (err && err.error) || 'Failed to generate report.';
+            console.error('[Report] Error response:', err);
+            return;
+          }
+          const blob = await response.blob();
+          console.log('[Report] Blob type:', blob.type);
+          if (blob.type !== 'application/pdf') {
+            status.textContent = 'Not a PDF!';
+            console.error('[Report] Not a PDF:', blob);
+            return;
+          }
+          const url = window.URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `anomaly_shap_report_${filename.replace(/\.[^/.]+$/, '')}.pdf`;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          window.URL.revokeObjectURL(url);
+          status.textContent = 'Downloaded!';
+          console.log('[Report] PDF downloaded!');
+        } catch (err) {
+          status.textContent = 'Error: ' + (err.message || err);
+          console.error('[Report] Catch error:', err);
+        }
+      };
+    });
+    </script>
 
     <!-- Multimodel Detection Section -->
     <section id="multimodel-detect-section" class="section hidden">

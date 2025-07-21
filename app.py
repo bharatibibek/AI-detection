@@ -38,6 +38,12 @@ try:
 except ImportError:
     print("Prophet not available - skipping Prophet model")
     Prophet = None
+from reportlab.platypus import Table, TableStyle, Paragraph, SimpleDocTemplate, Spacer, Image, PageBreak
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib.units import inch
+styles = getSampleStyleSheet()
 
 app = Flask(__name__, static_folder='static')
 CORS(app)
@@ -469,6 +475,24 @@ def multimodel_predict():
 
 app.register_blueprint(multimodel_bp)
 
+# Add model loading utility
+
+def load_models():
+    global model_iforest, model_mlp, mlp_scaler
+    try:
+        import joblib
+        if os.path.exists('iforest_model.pkl'):
+            model_iforest = joblib.load('iforest_model.pkl')
+        if os.path.exists('mlp_model.pkl'):
+            model_mlp = joblib.load('mlp_model.pkl')
+        if os.path.exists('mlp_scaler.pkl'):
+            mlp_scaler = joblib.load('mlp_scaler.pkl')
+    except Exception as e:
+        print(f'Error loading models: {e}')
+
+# Call at startup
+load_models()
+
 @app.route('/')
 def index():
     return render_template('dashboard.html')
@@ -668,6 +692,11 @@ def predict():
             anomaly['anomaly_score'] = float(norm_scores[i])
             anomaly['risk'] = calculate_risk(anomaly['anomaly_score'])
             anomalies.append(anomaly)
+
+    # Save detected anomalies to CSV for PDF report
+    import pandas as pd
+    if anomalies:
+        pd.DataFrame(anomalies).to_csv(os.path.join(UPLOAD_FOLDER, 'detected_anomalies.csv'), index=False)
 
     # Prepare chart data for frontend
     all_amounts = df['amount'].tolist() if 'amount' in df else []
@@ -903,6 +932,7 @@ def shap_plot():
 
 @app.route('/shap_report', methods=['POST'])
 def shap_report():
+    load_models()  # Ensure models are loaded before use
     """
     Expects JSON: {
         'filename': str,
@@ -912,6 +942,25 @@ def shap_report():
     Returns: PDF file (application/pdf)
     """
     import shap_utils
+    from datetime import datetime
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import plotly.express as px
+    import plotly.io as pio
+    from sklearn.decomposition import PCA
+    import numpy as np
+    # Set global seaborn/matplotlib style for professional charts
+    sns.set_theme(style='whitegrid', palette='deep', font_scale=1.2)
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['axes.titleweight'] = 'bold'
+    plt.rcParams['axes.labelsize'] = 13
+    plt.rcParams['axes.labelweight'] = 'bold'
+    plt.rcParams['legend.fontsize'] = 11
+    plt.rcParams['legend.title_fontsize'] = 12
+    plt.rcParams['axes.edgecolor'] = '#cccccc'
+    plt.rcParams['axes.linewidth'] = 1.2
+    plt.rcParams['figure.facecolor'] = 'white'
+    plt.rcParams['savefig.facecolor'] = 'white'
     data = request.get_json()
     filename = data.get('filename')
     model_type = data.get('model_type', 'Isolation Forest')
@@ -949,33 +998,487 @@ def shap_report():
                 local_b64s.append(shap_utils.shap_force_plot(explainer, shap_values[1], X_scaled[sample_idx], feature_names, idx))
         else:
             return jsonify({'error': 'Model not trained or unknown model type'}), 400
-        # Generate PDF
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmpfile:
-            c = canvas.Canvas(tmpfile.name, pagesize=letter)
-            width, height = letter
-            c.setFont('Helvetica-Bold', 16)
-            c.drawString(40, height-40, 'SHAP Explainability Report')
-            c.setFont('Helvetica', 12)
-            c.drawString(40, height-70, f'Model: {model_type}')
-            c.drawString(40, height-90, f'File: {filename}')
-            c.drawString(40, height-110, 'Global SHAP Summary:')
-            # Add summary plot
-            summary_img = ImageReader(io.BytesIO(base64.b64decode(summary_b64)))
-            c.drawImage(summary_img, 40, height-400, width=500, height=250, preserveAspectRatio=True, mask='auto')
-            y = height-420
-            if local_b64s:
-                c.drawString(40, y-20, 'Local SHAP Explanations:')
-                for i, local_b64 in enumerate(local_b64s):
-                    y -= 270
-                    if y < 100:
-                        c.showPage()
-                        y = height-100
-                    c.drawString(40, y, f'Instance {indices[i]}:')
-                    local_img = ImageReader(io.BytesIO(base64.b64decode(local_b64)))
-                    c.drawImage(local_img, 40, y-220, width=500, height=200, preserveAspectRatio=True, mask='auto')
-            c.save()
-            tmpfile.seek(0)
-            pdf_bytes = tmpfile.read()
+        # --- Advanced analytics and charts ---
+        chart_imgs = {}
+        # 1. Model Performance Comparison (if available)
+        try:
+            metrics_path = os.path.join(UPLOAD_FOLDER, 'model_metrics.csv')
+            if os.path.exists(metrics_path):
+                metrics_df = pd.read_csv(metrics_path)
+                fig, ax = plt.subplots(figsize=(7,4))
+                metrics_df.set_index('model').plot(kind='bar', ax=ax, color=['#2563eb', '#16a34a', '#f59e42', '#ef4444'])
+                ax.set_title('Model Performance Comparison', fontsize=16, fontweight='bold')
+                ax.set_ylabel('Score', fontsize=13)
+                ax.legend(title='Metric', loc='upper right', frameon=True)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['model_perf'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['model_perf'] = None
+        # 2. Anomaly Clustering Visualization (PCA)
+        try:
+            if features.shape[1] > 1 and 'anomaly_score' in df:
+                pca = PCA(n_components=2)
+                X_pca = pca.fit_transform(features)
+                fig, ax = plt.subplots(figsize=(7,4))
+                scatter = ax.scatter(X_pca[:,0], X_pca[:,1], c=(df['anomaly_score'] > 0.5), cmap='coolwarm', alpha=0.7, edgecolor='k', s=60)
+                ax.set_title('Anomaly Clustering (PCA)', fontsize=16, fontweight='bold')
+                ax.set_xlabel('PC1', fontsize=13)
+                ax.set_ylabel('PC2', fontsize=13)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['clustering'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['clustering'] = None
+        # 3. Transaction Amount Distribution
+        try:
+            if 'amount' in df:
+                fig, ax = plt.subplots(figsize=(7,4))
+                sns.histplot(df['amount'], bins=30, kde=True, color='#2563eb', ax=ax, label='All', alpha=0.7)
+                if 'anomaly_score' in df:
+                    sns.histplot(df[df['anomaly_score'] > 0.5]['amount'], bins=30, color='#ef4444', ax=ax, label='Anomalies', alpha=0.7)
+                ax.set_title('Transaction Amount Distribution', fontsize=16, fontweight='bold')
+                ax.set_xlabel('Amount', fontsize=13)
+                ax.set_ylabel('Count', fontsize=13)
+                ax.legend(title='Legend', loc='upper right', frameon=True)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['amount_dist'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['amount_dist'] = None
+        # 4. Top Features Table (by SHAP importance)
+        top_features_table = []
+        try:
+            if 'global_importance' in locals() and len(feature_names) > 0:
+                top_idx = np.argsort(global_importance)[::-1][:5]
+                for idx in top_idx:
+                    fname = feature_names[idx]
+                    mean = features[fname].mean()
+                    std = features[fname].std()
+                    shap_val = global_importance[idx]
+                    top_features_table.append((fname, mean, std, shap_val))
+        except Exception as e:
+            pass
+        # 5. Branch/Location Analysis
+        try:
+            if 'anomaly_score' in df and 'branch_name' in df:
+                branch_counts = df[df['anomaly_score'] > 0.5]['branch_name'].value_counts()
+                fig, ax = plt.subplots(figsize=(7,4))
+                branch_counts.plot(kind='bar', ax=ax, color='#16a34a', alpha=0.8)
+                ax.set_title('Anomalies per Branch', fontsize=16, fontweight='bold')
+                ax.set_xlabel('Branch', fontsize=13)
+                ax.set_ylabel('Anomaly Count', fontsize=13)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['branch'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['branch'] = None
+        # 6. Monthly/Weekly Trends
+        try:
+            if 'timestamp' in df and 'anomaly_score' in df:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                monthly = df[df['anomaly_score'] > 0.5].groupby(df['timestamp'].dt.to_period('M')).size()
+                fig, ax = plt.subplots(figsize=(7,4))
+                monthly.plot(ax=ax, marker='o', color='#3b82f6', linewidth=2)
+                ax.set_title('Monthly Anomaly Trend', fontsize=16, fontweight='bold')
+                ax.set_xlabel('Month', fontsize=13)
+                ax.set_ylabel('Anomaly Count', fontsize=13)
+                for i, v in enumerate(monthly):
+                    ax.annotate(str(v), (monthly.index[i].to_timestamp(), v), textcoords="offset points", xytext=(0,5), ha='center', fontsize=10, color='#3b82f6')
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['monthly'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['monthly'] = None
+        # 7. Anomaly Score Distribution
+        try:
+            if 'anomaly_score' in df:
+                fig, ax = plt.subplots(figsize=(7,4))
+                sns.boxplot(x=df['anomaly_score'], color='#f59e42', ax=ax)
+                ax.set_title('Anomaly Score Distribution', fontsize=16, fontweight='bold')
+                ax.set_xlabel('Anomaly Score', fontsize=13)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['score_box'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['score_box'] = None
+        # 8. Anomaly Timeline (after monthly for order)
+        try:
+            if 'timestamp' in df and 'anomaly_score' in df:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                timeline = df[df['anomaly_score'] > 0.5].groupby(df['timestamp'].dt.date).size()
+                fig, ax = plt.subplots(figsize=(7,4))
+                timeline.plot(ax=ax, marker='o', color='#8b5cf6', linewidth=2)
+                ax.set_title('Anomaly Timeline', fontsize=16, fontweight='bold')
+                ax.set_xlabel('Date', fontsize=13)
+                ax.set_ylabel('Anomaly Count', fontsize=13)
+                for i, v in enumerate(timeline):
+                    ax.annotate(str(v), (timeline.index[i], v), textcoords="offset points", xytext=(0,5), ha='center', fontsize=10, color='#8b5cf6')
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['timeline'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['timeline'] = None
+        # 9. Anomaly Type Distribution
+        try:
+            if 'anomaly_score' in df and 'transaction_type' in df:
+                types = df[df['anomaly_score'] > 0.5]['transaction_type'].value_counts()
+                fig, ax = plt.subplots(figsize=(7,4))
+                sns.barplot(x=types.index, y=types.values, ax=ax, palette='muted')
+                ax.set_title('Anomaly Type Distribution', fontsize=16, fontweight='bold')
+                ax.set_xlabel('Transaction Type', fontsize=13)
+                ax.set_ylabel('Count', fontsize=13)
+                for i, v in enumerate(types.values):
+                    ax.text(i, v+0.5, str(v), ha='center', fontsize=10, color='#ef4444')
+                ax.grid(True, linestyle='--', alpha=0.6)
+                sns.despine()
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['type_dist'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['type_dist'] = None
+        # 10. Correlation Heatmap
+        try:
+            if features.shape[1] > 1:
+                corr = features.corr()
+                fig, ax = plt.subplots(figsize=(7,5))
+                sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', ax=ax, cbar=True, linewidths=0.5, linecolor='#cccccc', annot_kws={"size":11})
+                ax.set_title('Feature Correlation Heatmap', fontsize=16, fontweight='bold')
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                chart_imgs['corr_heatmap'] = base64.b64encode(buf.read()).decode('utf-8')
+        except Exception as e:
+            chart_imgs['corr_heatmap'] = None
+        # --- Professional PDF Generation with layout polish ---
+        # Use Platypus flowables for all content
+        report_elements = []
+
+        # Cover Page
+        cover_title = Paragraph('<para align="center"><font size=24><b>Comprehensive Anomaly & SHAP Report</b></font></para>', styles['Title'])
+        cover_org = Paragraph('<para align="center"><font size=16>Kathmandu Valley Cooperative</font></para>', styles['Normal'])
+        cover_date = Paragraph(f'<para align="center"><font size=12>Generated: {datetime.now().strftime("%Y-%m-%d %H:%M")}</font></para>', styles['Normal'])
+        report_elements += [cover_title, Spacer(1, 0.2*inch), cover_org, Spacer(1, 0.1*inch), cover_date, PageBreak()]
+
+        # 1. Executive Summary
+        report_elements.append(Paragraph('<font size=18><b>1. Executive Summary</b></font>', styles['Heading1']))
+        report_elements.append(Spacer(1, 0.1*inch))
+        report_elements.append(Paragraph('This report provides a comprehensive analysis of cooperative transaction anomalies detected by advanced AI models, along with SHAP explainability insights.', styles['Normal']))
+        report_elements.append(Spacer(1, 0.2*inch))
+
+        # 2. Key Metrics
+        report_elements.append(Paragraph('<font size=16><b>2. Key Metrics</b></font>', styles['Heading2']))
+        # Ensure total_tx and anomalies are defined before report_elements
+        # This must be placed after df is loaded and before report_elements is built
+
+        total_tx = len(df)
+        # Always try to load anomalies from 'Uploads/detected_anomalies.csv' for the report
+        anomaly_csv_path = os.path.join(UPLOAD_FOLDER, 'detected_anomalies.csv')
+        use_dashboard_anomalies = False
+        if os.path.exists(anomaly_csv_path):
+            try:
+                dashboard_anomalies = pd.read_csv(anomaly_csv_path)
+                if not dashboard_anomalies.empty:
+                    anomalies = dashboard_anomalies
+                    use_dashboard_anomalies = True
+            except Exception as e:
+                use_dashboard_anomalies = False
+        # If not, fall back to anomalies from the current CSV as before
+        if not use_dashboard_anomalies:
+            if 'anomaly_score' in df:
+                anomalies = df[df['anomaly_score'] > 0.5]
+            else:
+                anomalies = df.head(10)
+        anomalies_detected = len(anomalies)
+        anomaly_rate = f'{100*anomalies_detected/total_tx:.2f}%'
+
+        metrics_data = [
+            ['Total Transactions', f'{total_tx:,}'],
+            ['Anomalies Detected', f'{anomalies_detected:,}'],
+            ['Anomaly Rate', anomaly_rate],
+            ['Model Type', model_type],
+            ['Report Generated', datetime.now().strftime('%Y-%m-%d %H:%M')]
+        ]
+        metrics_table = Table(metrics_data, colWidths=[2.5*inch, 2.5*inch])
+        metrics_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.lightgrey),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.black),
+            ('ALIGN', (0,0), (-1,-1), 'LEFT'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,-1), 12),
+            ('BOTTOMPADDING', (0,0), (-1,0), 8),
+            ('BACKGROUND', (0,1), (-1,-1), colors.whitesmoke),
+            ('GRID', (0,0), (-1,-1), 1, colors.grey)
+        ]))
+        report_elements.append(metrics_table)
+        report_elements.append(Spacer(1, 0.2*inch))
+
+        # 3. Top Anomalies
+        report_elements.append(Paragraph('<font size=16><b>3. Top Anomalies</b></font>', styles['Heading2']))
+        # For Top Anomalies Table, use the same columns as dashboard: Log ID, Member ID, Type, Amount, Risk, Anomaly Score
+        anomaly_table_data = [[
+            'Log ID', 'Member ID', 'Type', 'Amount', 'Risk', 'Anomaly Score'
+        ]]
+        for _, row in anomalies.iterrows():
+            anomaly_table_data.append([
+                row.get('log_id', ''), row.get('member_id', ''), row.get('transaction_type', ''),
+                f"NPR {row.get('amount', 0):,.2f}", row.get('risk', ''),
+                f"{row.get('anomaly_score', 0):.3f}" if 'anomaly_score' in row else ''
+            ])
+        anomaly_table = Table(anomaly_table_data, colWidths=[0.7*inch, 1*inch, 0.9*inch, 1.1*inch, 1.1*inch, 1*inch])
+        anomaly_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563eb')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 12),
+            ('BACKGROUND', (0,1), (-1,-1), colors.whitesmoke),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.whitesmoke, colors.lightgrey]),
+            ('ALIGN', (0,1), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 1, colors.grey)
+        ]))
+        report_elements.append(anomaly_table)
+        report_elements.append(PageBreak())
+
+        # 5. Advanced Charts
+        report_elements.append(Paragraph('<font size=16><b>5. Advanced Charts</b></font>', styles['Heading2']))
+        # For each chart, add a subsection title and embed the image
+        for chart_name, chart_title in [
+            ('timeline', 'Anomaly Timeline'),
+            ('clustering', 'Anomaly Clustering (Amount vs. Balance)'),
+            ('hourly', 'Hourly Distribution'),
+            ('corr_heatmap', 'Feature Correlation Heatmap'),
+            ('type_dist', 'Anomaly Type Distribution')
+        ]:
+            report_elements.append(Paragraph(f'<b>{chart_title}</b>', styles['Heading3']))
+            if chart_imgs.get(chart_name):
+                img = Image(io.BytesIO(base64.b64decode(chart_imgs[chart_name])), width=5*inch, height=2.5*inch)
+                report_elements.append(img)
+                report_elements.append(Spacer(1, 0.2*inch))
+            else:
+                report_elements.append(Paragraph('Chart not available.', styles['Normal']))
+                report_elements.append(Spacer(1, 0.2*inch))
+
+        # Footer and page numbers will be handled by SimpleDocTemplate's onPage callback
+        # Add a glossary/appendix at the end
+        report_elements.append(PageBreak())
+        report_elements.append(Paragraph('<font size=16><b>Glossary & Appendix</b></font>', styles['Heading2']))
+        report_elements.append(Paragraph('Definitions and methodology details go here.', styles['Normal']))
+
+        # --- Data Sample Table (first 10–20 rows) ---
+        report_elements.append(Paragraph('<font size=16><b>4. Data Sample</b></font>', styles['Heading2']))
+        sample_data = [list(df.columns)]
+        for _, row in df.head(10).iterrows():
+            sample_data.append([str(row.get(col, '')) for col in df.columns])
+        sample_table = Table(sample_data, colWidths=[1.2*inch]*len(df.columns))
+        sample_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#2563eb')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 10),
+            ('BACKGROUND', (0,1), (-1,-1), colors.whitesmoke),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.whitesmoke, colors.lightgrey]),
+            ('ALIGN', (0,1), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey)
+        ]))
+        report_elements.append(sample_table)
+        report_elements.append(PageBreak())
+
+        # --- Summary Statistics Table for all columns ---
+        report_elements.append(Paragraph('<font size=16><b>5. Summary Statistics</b></font>', styles['Heading2']))
+        summary_data = [['Column', 'Type', 'Mean', 'Std', 'Min', 'Max', 'Unique/Top', 'Freq/Count']]
+        for col in df.columns:
+            dtype = str(df[col].dtype)
+            if pd.api.types.is_numeric_dtype(df[col]):
+                summary_data.append([
+                    col, dtype,
+                    f"{df[col].mean():,.2f}", f"{df[col].std():,.2f}", f"{df[col].min():,.2f}", f"{df[col].max():,.2f}",
+                    '-', '-'
+                ])
+            else:
+                vc = df[col].value_counts()
+                top = vc.index[0] if not vc.empty else '-'
+                freq = vc.iloc[0] if not vc.empty else '-'
+                summary_data.append([
+                    col, dtype, '-', '-', '-', '-', str(top), str(freq)
+                ])
+        summary_table = Table(summary_data, colWidths=[1.2*inch]*8)
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#16a34a')),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('ALIGN', (0,0), (-1,0), 'CENTER'),
+            ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0,0), (-1,0), 10),
+            ('BACKGROUND', (0,1), (-1,-1), colors.whitesmoke),
+            ('ROWBACKGROUNDS', (0,1), (-1,-1), [colors.whitesmoke, colors.lightgrey]),
+            ('ALIGN', (0,1), (-1,-1), 'CENTER'),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.grey)
+        ]))
+        report_elements.append(summary_table)
+        report_elements.append(PageBreak())
+
+        # --- Charts for all numeric columns ---
+        for col in df.select_dtypes(include='number').columns:
+            report_elements.append(Paragraph(f'<b>Distribution of {col}</b>', styles['Heading3']))
+            try:
+                fig, ax = plt.subplots(figsize=(6,3))
+                sns.histplot(df[col].dropna(), bins=30, kde=True, color='#2563eb', ax=ax)
+                ax.set_title(f'Distribution of {col}', fontsize=14, fontweight='bold')
+                ax.set_xlabel(col, fontsize=12)
+                ax.set_ylabel('Count', fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                report_elements.append(Image(buf, width=5*inch, height=2.5*inch))
+                report_elements.append(Spacer(1, 0.2*inch))
+            except Exception as e:
+                report_elements.append(Paragraph('Chart not available.', styles['Normal']))
+                report_elements.append(Spacer(1, 0.2*inch))
+        report_elements.append(PageBreak())
+
+        # --- Charts for all categorical columns ---
+        for col in df.select_dtypes(include='object').columns:
+            report_elements.append(Paragraph(f'<b>Value Counts for {col}</b>', styles['Heading3']))
+            try:
+                vc = df[col].value_counts().head(20)
+                fig, ax = plt.subplots(figsize=(6,3))
+                vc.plot(kind='bar', ax=ax, color='#8b5cf6', alpha=0.8)
+                ax.set_title(f'Value Counts for {col}', fontsize=14, fontweight='bold')
+                ax.set_xlabel(col, fontsize=12)
+                ax.set_ylabel('Count', fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                report_elements.append(Image(buf, width=5*inch, height=2.5*inch))
+                report_elements.append(Spacer(1, 0.2*inch))
+            except Exception as e:
+                report_elements.append(Paragraph('Chart not available.', styles['Normal']))
+                report_elements.append(Spacer(1, 0.2*inch))
+        report_elements.append(PageBreak())
+
+        # --- Correlation Heatmap for all numeric columns ---
+        if len(df.select_dtypes(include='number').columns) > 1:
+            report_elements.append(Paragraph('<b>Correlation Heatmap (All Numeric Columns)</b>', styles['Heading3']))
+            try:
+                corr = df.select_dtypes(include='number').corr()
+                fig, ax = plt.subplots(figsize=(5,4))
+                sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', ax=ax, cbar=True, linewidths=0.5, linecolor='#cccccc', annot_kws={"size":11})
+                ax.set_title('Correlation Heatmap', fontsize=14, fontweight='bold')
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                report_elements.append(Image(buf, width=5*inch, height=2.5*inch))
+                report_elements.append(Spacer(1, 0.2*inch))
+            except Exception as e:
+                report_elements.append(Paragraph('Chart not available.', styles['Normal']))
+                report_elements.append(Spacer(1, 0.2*inch))
+        report_elements.append(PageBreak())
+
+        # --- Timeline and Hourly Charts for all data if timestamp present ---
+        if 'timestamp' in df:
+            try:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                timeline = df.groupby(df['timestamp'].dt.date).size()
+                report_elements.append(Paragraph('<b>Transaction Timeline (per day)</b>', styles['Heading3']))
+                fig, ax = plt.subplots(figsize=(7,4))
+                timeline.plot(ax=ax, marker='o', color='#e11d48', linewidth=2)
+                ax.set_title('Transaction Timeline (per day)', fontsize=14, fontweight='bold')
+                ax.set_xlabel('Date', fontsize=12)
+                ax.set_ylabel('Transaction Count', fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                report_elements.append(Image(buf, width=5*inch, height=2.5*inch))
+                report_elements.append(Spacer(1, 0.2*inch))
+            except Exception as e:
+                report_elements.append(Paragraph('Chart not available.', styles['Normal']))
+                report_elements.append(Spacer(1, 0.2*inch))
+            try:
+                hours = df['timestamp'].dt.hour.value_counts().sort_index()
+                report_elements.append(Paragraph('<b>Hourly Distribution (All Data)</b>', styles['Heading3']))
+                fig, ax = plt.subplots(figsize=(7,4))
+                hours.plot(kind='bar', ax=ax, color='#0891b2', alpha=0.8)
+                ax.set_title('Hourly Distribution (All Data)', fontsize=14, fontweight='bold')
+                ax.set_xlabel('Hour', fontsize=12)
+                ax.set_ylabel('Count', fontsize=12)
+                ax.grid(True, linestyle='--', alpha=0.6)
+                plt.tight_layout()
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                plt.close(fig)
+                buf.seek(0)
+                report_elements.append(Image(buf, width=5*inch, height=2.5*inch))
+                report_elements.append(Spacer(1, 0.2*inch))
+            except Exception as e:
+                report_elements.append(Paragraph('Chart not available.', styles['Normal']))
+                report_elements.append(Spacer(1, 0.2*inch))
+        report_elements.append(PageBreak())
+
+        # Build the PDF
+        pdf_path = tempfile.NamedTemporaryFile(delete=False, suffix='.pdf').name
+
+        def add_footer(canvas, doc):
+            canvas.saveState()
+            canvas.setFont('Helvetica', 9)
+            canvas.drawString(inch, 0.5*inch, f'Page {doc.page}')
+            canvas.drawRightString(7.5*inch, 0.5*inch, 'Kathmandu Valley Cooperative - Anomaly Report')
+            canvas.restoreState()
+
+        SimpleDocTemplate(pdf_path, pagesize=letter).build(report_elements, onFirstPage=add_footer, onLaterPages=add_footer)
+        with open(pdf_path, 'rb') as f:
+            pdf_bytes = f.read()
         return (pdf_bytes, 200, {'Content-Type': 'application/pdf', 'Content-Disposition': f'attachment; filename=shap_report_{model_type.replace(" ", "_")}.pdf'})
     except Exception as e:
         return jsonify({'error': f'SHAP report generation failed: {str(e)}'}), 500
